@@ -187,6 +187,7 @@ class RobDataParallelPPOActor(BasePPOActor):
                 log_probs = log_probs.reshape((batch_size, traj_len*response_length))
                 entropy = entropy.reshape((batch_size, traj_len*response_length))
             elif self.config.vla == "internvl":
+                # TODO: add internvl support
                 pass
                 
                 
@@ -247,6 +248,10 @@ class RobDataParallelPPOActor(BasePPOActor):
                 entropy = entropy.reshape((1, -1))
 
                 return entropy, log_probs
+            
+            elif self.config.vla == "internvl":
+                # TODO: add internvl support
+                pass
                 
 
     def _forward_micro_batch_entropy(self, micro_batch, temperature) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -317,6 +322,10 @@ class RobDataParallelPPOActor(BasePPOActor):
                 _, entropy = self.apply_mask_with_grad_control(entropy, entropy, mask)
                 entropy = entropy.reshape((batch_size, traj_len*response_length))
                 return entropy
+            
+            elif self.config.vla == "internvl":
+                # TODO: add internvl support
+                pass
 
 
     def _optimizer_step(self):

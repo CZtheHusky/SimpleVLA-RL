@@ -126,3 +126,7 @@ log
 outputs
 Openvla-oft-SFT-libero10-traj1
 checkpoint-2316
+grmanipulation
+deltaQ_backbone/
+openvla-7b-finetuned-libero-10
+Openvla-oft-SFT-libero10-traj1

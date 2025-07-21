@@ -181,7 +181,7 @@ class InternVLProcessor(ProcessorMixin):
         self,
         text: Union[TextInput, PreTokenizedInput, List[TextInput], List[PreTokenizedInput]],
         images: Union[Image.Image, List[Image.Image]],
-        padding: Union[bool, str, PaddingStrategy] = False,
+        padding: Union[bool, str, PaddingStrategy] = True,
         truncation: Optional[Union[bool, str, TruncationStrategy]] = None,
         max_length: Optional[int] = None,
         return_tensors: Optional[Union[str, TensorType]] = TensorType.PYTORCH,

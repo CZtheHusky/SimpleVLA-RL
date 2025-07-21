@@ -275,7 +275,7 @@ class RobHFRollout(BaseRollout):
     
     
     def process_input(self,inputs:list, task_descriptions:list):
-        if self.config.vla == "internvl":
+        if self.config.vla == "internvl_chat":
             # TODO: implement internvl input processing
             pass
         batchdata = {"input_ids":[],"attention_mask":[],"pixel_values":[]}  
@@ -645,7 +645,7 @@ class RobHFRollout(BaseRollout):
             
             return batch
         
-        elif self.config.vla == "internvl":
+        elif self.config.vla == "internvl_chat":
             # TODO: add internvl support
             pass
             

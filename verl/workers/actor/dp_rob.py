@@ -186,7 +186,7 @@ class RobDataParallelPPOActor(BasePPOActor):
                 
                 log_probs = log_probs.reshape((batch_size, traj_len*response_length))
                 entropy = entropy.reshape((batch_size, traj_len*response_length))
-            elif self.config.vla == "internvl":
+            elif self.config.vla == "internvl_chat":
                 # TODO: add internvl support
                 pass
                 
@@ -249,7 +249,7 @@ class RobDataParallelPPOActor(BasePPOActor):
 
                 return entropy, log_probs
             
-            elif self.config.vla == "internvl":
+            elif self.config.vla == "internvl_chat":
                 # TODO: add internvl support
                 pass
                 
@@ -323,7 +323,7 @@ class RobDataParallelPPOActor(BasePPOActor):
                 entropy = entropy.reshape((batch_size, traj_len*response_length))
                 return entropy
             
-            elif self.config.vla == "internvl":
+            elif self.config.vla == "internvl_chat":
                 # TODO: add internvl support
                 pass
 

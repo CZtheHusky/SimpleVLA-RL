@@ -14,7 +14,7 @@ SFT_MODEL_PATH="/home/caozhe/workspace/SimpleVLA-RL/checkpoint-2316"
 CKPT_PATH="/home/caozhe/workspace/SimpleVLA-RL/ckpts"
 # DATASET_NAME can be libero_10 (libero_Long), libero_90, libero_spatial, libero_object, libero_goal
 DATASET_NAME="libero_10"
-VLA_NAME="openvla-oft"
+VLA_NAME="internvl_chat"
 NUM_GPUS=1
 # If you want to use 2*8 GPU to RL. Set NUM_NODES=2
 NUM_NODES=1 

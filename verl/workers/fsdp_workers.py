@@ -152,15 +152,15 @@ class RobActorRolloutRefWorker(Worker):
                 update_auto_map(local_path)
                 check_model_logic_mismatch(local_path)
             torch.distributed.barrier()
-        elif self.config.model.vla == "internvl":
-            from verl.utils.vla_utils.internvl.configuration_internvl_chat import InternVLChatConfig
-            from verl.utils.vla_utils.internvl.modeling_internvl_verl import InternVLForActionPrediction
-            from verl.utils.vla_utils.internvl.processing_internvl import InternVLImageProcessor, InternVLProcessor
-            AutoConfig.register('internvl', InternVLChatConfig)
-            AutoImageProcessor.register(InternVLChatConfig, InternVLImageProcessor)
-            AutoProcessor.register(InternVLChatConfig, InternVLProcessor)
-            AutoModelForVision2Seq.register(InternVLChatConfig, InternVLForActionPrediction)
-            # pass
+        elif self.config.model.vla == "internvl_chat":
+            # from verl.utils.vla_utils.internvl.configuration_internvl_chat import InternVLChatConfig
+            # from verl.utils.vla_utils.internvl.modeling_internvl_verl import InternVLForActionPrediction
+            # from verl.utils.vla_utils.internvl.processing_internvl import InternVLImageProcessor, InternVLProcessor
+            # AutoConfig.register('internvl_chat', InternVLChatConfig)
+            # AutoImageProcessor.register(InternVLChatConfig, InternVLImageProcessor)
+            # AutoProcessor.register(InternVLChatConfig, InternVLProcessor)
+            # AutoModelForVision2Seq.register(InternVLChatConfig, InternVLForActionPrediction)
+            pass
         
         #add end
 
@@ -224,7 +224,7 @@ class RobActorRolloutRefWorker(Worker):
                                                     config=actor_model_config,              
                                                     trust_remote_code=True,
                                                 )
-            elif self.config.model.vla == "internvl":
+            elif self.config.model.vla == "internvl_chat":
                 # TODO: debug
                 actor_module = AutoModelForCausalLM.from_pretrained(
                     pretrained_model_name_or_path=local_path,

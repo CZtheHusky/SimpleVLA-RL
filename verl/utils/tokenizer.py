@@ -71,6 +71,11 @@ def hf_tokenizer(name_or_path, correct_pad_token=True, correct_gemma2=True, **kw
         AutoProcessor.register(OpenVLAConfig, PrismaticProcessor)
         processor = AutoProcessor.from_pretrained(name_or_path, trust_remote_code=True)
         tokenizer=processor.tokenizer
+    elif model == "internvl_chat":
+        # internvl_chat generate action with no token overwritten, use the default tokenizer
+        tokenizer = AutoTokenizer.from_pretrained(name_or_path, **kwargs)
+        # TODO: check if the pad token is set correctly
+        correct_pad_token = False
     else:
         tokenizer = AutoTokenizer.from_pretrained(name_or_path, **kwargs)
         

@@ -38,7 +38,7 @@ class InternVLChatModel(PreTrainedModel):
     _supports_flash_attn_2 = True
     _no_split_modules = ['InternVisionModel', 'LlamaDecoderLayer', 'InternLM2DecoderLayer']
 
-    def __init__(self, config: InternVLChatConfig, vision_model=None, language_model=None, use_flash_attn=False):
+    def __init__(self, config: InternVLChatConfig, vision_model=None, language_model=None):
         super().__init__(config)
 
         assert version_cmp(transformers.__version__, '4.36.2', 'ge')
@@ -195,7 +195,7 @@ class InternVLChatModel(PreTrainedModel):
         vit_embeds = vit_embeds.reshape(vit_embeds.shape[0], -1, vit_embeds.shape[-1])
         vit_embeds = self.mlp1(vit_embeds)
         return vit_embeds
-    
+
     def batch_chat(self, tokenizer, pixel_values, questions, generation_config, num_patches_list=None,
                    history=None, return_history=False, IMG_START_TOKEN='<img>', IMG_END_TOKEN='</img>',
                    IMG_CONTEXT_TOKEN='<IMG_CONTEXT>', verbose=False, image_counts=None):
@@ -243,55 +243,6 @@ class InternVLChatModel(PreTrainedModel):
         )
         responses = tokenizer.batch_decode(generation_output, skip_special_tokens=True)
         responses = [response.split(template.sep)[0].strip() for response in responses]
-        return responses
-
-    def batch_chat_multi_img(self, tokenizer, pixel_values, questions, generation_config, num_patches_list=None,
-                   history=None, return_history=False, IMG_START_TOKEN='<img>', IMG_END_TOKEN='</img>',
-                   IMG_CONTEXT_TOKEN='<IMG_CONTEXT>', verbose=False, image_counts=None):
-        if history is not None or return_history:
-            print('Now multi-turn chat is not supported in batch_chat.')
-            raise NotImplementedError
-
-        if image_counts is not None:
-            num_patches_list = image_counts
-            print('Warning: `image_counts` is deprecated. Please use `num_patches_list` instead.')
-
-        img_context_token_id = tokenizer.convert_tokens_to_ids(IMG_CONTEXT_TOKEN)
-        self.img_context_token_id = img_context_token_id
-
-        if verbose and pixel_values is not None:
-            image_bs = pixel_values.shape[0]
-            print(f'dynamic ViT batch size: {image_bs}')
-
-        queries = []
-        for idx, num_patches in enumerate(num_patches_list):
-            question = questions[idx]
-            if pixel_values is not None and '<image>' not in question:
-                question = '<image>\n' + question
-            template = get_conv_template(self.template)
-            template.system_message = self.system_message
-            template.append_message(template.roles[0], question)
-            template.append_message(template.roles[1], None)
-            query = template.get_prompt()
-            for patches in num_patches:
-                image_tokens = IMG_START_TOKEN + IMG_CONTEXT_TOKEN * self.num_image_token * patches + IMG_END_TOKEN
-                query = query.replace('<image>', image_tokens, 1)
-            queries.append(query)
-
-        tokenizer.padding_side = 'left'
-        model_inputs = tokenizer(queries, return_tensors='pt', padding=True)
-        input_ids = model_inputs['input_ids'].to(self.device)
-        attention_mask = model_inputs['attention_mask'].to(self.device)
-        eos_token_id = tokenizer.convert_tokens_to_ids(template.sep.strip())
-        generation_config['eos_token_id'] = eos_token_id
-        generation_output = self.generate(
-            pixel_values=pixel_values,
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            **generation_config
-        )
-        responses = tokenizer.batch_decode(generation_output, skip_special_tokens=True)
-        responses = [response.split(template.sep.strip())[0].strip() for response in responses]
         return responses
 
     def chat(self, tokenizer, pixel_values, question, generation_config, history=None, return_history=False,

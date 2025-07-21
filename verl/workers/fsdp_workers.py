@@ -117,7 +117,7 @@ class RobActorRolloutRefWorker(Worker):
                                trust_remote_code=False):
         from verl.utils.model import print_model_size, update_model_config
         from verl.utils.torch_dtypes import PrecisionType
-        from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig, AutoImageProcessor, AutoModelForVision2Seq, AutoProcessor
+        from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig, AutoImageProcessor, AutoModelForVision2Seq, AutoProcessor, AutoModelForCausalLM
         from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, ShardingStrategy, MixedPrecision, \
             CPUOffload
         from torch import optim
@@ -215,6 +215,13 @@ class RobActorRolloutRefWorker(Worker):
                                                     config=actor_model_config,              
                                                     trust_remote_code=True,
                                                 )
+            elif self.config.model.vla == 'internvl':
+                actor_module = AutoModelForCausalLM(
+                    pretrained_model_name_or_path=local_path,
+                    torch_dtype=torch_dtype,
+                    config=actor_model_config,
+                    trust_remote_code=True,
+                )
            
             actor_module.to(torch_dtype)
 

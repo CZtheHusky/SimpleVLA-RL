@@ -642,7 +642,9 @@ class RobHFRollout(BaseRollout):
                 }
             
             return batch
-                
+        
+        elif self.config.vla == "internvl":
+            pass
             
 
         

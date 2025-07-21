@@ -1,26 +1,26 @@
 set -x
 
 export NCCL_DEBUG=WARN 
-export WANDB_API_KEY='YOUR WANDB KEY'
+export WANDB_API_KEY='1d0ffcbb9b10d1e1f1bf85b01de94b7d377b826a'
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export TOKENIZERS_PARALLELISM=true
 export CUDA_LAUNCH_BLOCKING=1
 export TORCH_USE_CUDA_DSA=1
 
 PROJECT_NAME='SimpleVLA-RL'
-EXPERIMENT_NAME='MODIFIED YOURSELF e.g. vla-lib10_model10j_lr10_tmp16_nsample8_clip08-128_batch64_ppominibs128_node2' 
+EXPERIMENT_NAME='verl_test' 
 # For openvla-oft Libero-Long traj1 SFT or traj all SFT models can be find in https://huggingface.co/collections/Haozhan72/simplevla-rl-6833311430cd9df52aeb1f86
-SFT_MODEL_PATH="YOUR SFT_MODEL_PATH"
-CKPT_PATH="THE PATH YOU WANT TO SAVE YOUR CKPT"
+SFT_MODEL_PATH="/home/caozhe/workspace/SimpleVLA-RL/checkpoint-2316"
+CKPT_PATH="/home/caozhe/workspace/SimpleVLA-RL/ckpts"
 # DATASET_NAME can be libero_10 (libero_Long), libero_90, libero_spatial, libero_object, libero_goal
 DATASET_NAME="libero_10"
 VLA_NAME="openvla-oft"
-NUM_GPUS=8
+NUM_GPUS=1
 # If you want to use 2*8 GPU to RL. Set NUM_NODES=2
 NUM_NODES=1 
-ALIGN_PATH="YOUR PATH TO SimpleVLA-RL/align.json"
+ALIGN_PATH="/home/caozhe/workspace/SimpleVLA-RL/align.json"
 
-HYDRA_FULL_ERROR=1 python -m verl.trainer.main_ppo \
+HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=1 python -m verl.trainer.main_ppo \
     data.task_suite_name=$DATASET_NAME \
     data.num_trials_per_task=50 \
     data.n_samples=8 \
@@ -28,8 +28,8 @@ HYDRA_FULL_ERROR=1 python -m verl.trainer.main_ppo \
     data.accuracy_lower_bound=0.1 \
     data.accuracy_upper_bound=0.9 \
     data.oversample_factor=1 \
-    data.train_batch_size=64 \
-    data.val_batch_size=496 \
+    data.train_batch_size=32 \
+    data.val_batch_size=248 \
     data.max_prompt_length=256 \
     data.max_response_length=128 \
     actor_rollout_ref.model.path=$SFT_MODEL_PATH \

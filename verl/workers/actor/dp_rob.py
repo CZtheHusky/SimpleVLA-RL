@@ -186,6 +186,8 @@ class RobDataParallelPPOActor(BasePPOActor):
                 
                 log_probs = log_probs.reshape((batch_size, traj_len*response_length))
                 entropy = entropy.reshape((batch_size, traj_len*response_length))
+            elif self.config.vla == "internvl":
+                pass
                 
                 
 

@@ -124,3 +124,5 @@ tests/e2e/toy_examples/deepspeed/synchronous/output.txt
 logs
 log
 outputs
+Openvla-oft-SFT-libero10-traj1
+checkpoint-2316

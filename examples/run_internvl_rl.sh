@@ -10,12 +10,12 @@ export TORCH_USE_CUDA_DSA=1
 PROJECT_NAME='SimpleVLA-RL'
 EXPERIMENT_NAME='verl_test' 
 # For openvla-oft Libero-Long traj1 SFT or traj all SFT models can be find in https://huggingface.co/collections/Haozhan72/simplevla-rl-6833311430cd9df52aeb1f86
-SFT_MODEL_PATH="/home/caozhe/workspace/SimpleVLA-RL/checkpoint-2316"
+SFT_MODEL_PATH="/home/caozhe/workspace/SimpleVLA-RL/deltaQ_backbone"
 CKPT_PATH="/home/caozhe/workspace/SimpleVLA-RL/ckpts"
 # DATASET_NAME can be libero_10 (libero_Long), libero_90, libero_spatial, libero_object, libero_goal
-DATASET_NAME="libero_10"
+DATASET_NAME="grutopia"
 VLA_NAME="internvl_chat"
-NUM_GPUS=1
+NUM_GPUS=8
 # If you want to use 2*8 GPU to RL. Set NUM_NODES=2
 NUM_NODES=1 
 ALIGN_PATH="/home/caozhe/workspace/SimpleVLA-RL/align.json"

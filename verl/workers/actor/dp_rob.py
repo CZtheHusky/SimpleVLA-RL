@@ -187,10 +187,29 @@ class RobDataParallelPPOActor(BasePPOActor):
                 log_probs = log_probs.reshape((batch_size, traj_len*response_length))
                 entropy = entropy.reshape((batch_size, traj_len*response_length))
             elif self.config.vla == "internvl_chat":
-                # TODO: add internvl support
-                pass
+                output = self.actor_module(
+                    pixel_values=pixel_values,
+                    input_ids=input_ids_unpad,
+                    attention_mask=attention_mask,
+                    use_cache=False  # prevent model thinks we are generating
+                )
+                logits = output.logits
+                logits = logits[:, -response_length - 1:-1]  # (bsz, response_length)
+                logits = logits.div(temperature) 
                 
+                log_probs = logprobs_from_logits(logits, responses)
+                entropy = verl_F.entropy_from_logits(logits)  # (bsz, response_length)
+                #ADD
                 
+                log_probs = log_probs.reshape((batch_size, traj_len,) + log_probs.shape[1:])
+                entropy = entropy.reshape((batch_size, traj_len,) + entropy.shape[1:])
+
+                
+                mask = self.generate_traj_mask(micro_batch['finish_step'], traj_len)
+                log_probs, entropy = self.apply_mask_with_grad_control(log_probs, entropy, mask)
+                
+                log_probs = log_probs.reshape((batch_size, traj_len*response_length))
+                entropy = entropy.reshape((batch_size, traj_len*response_length))
 
             return entropy, log_probs
     
@@ -250,8 +269,27 @@ class RobDataParallelPPOActor(BasePPOActor):
                 return entropy, log_probs
             
             elif self.config.vla == "internvl_chat":
-                # TODO: add internvl support
-                pass
+                response_length = responses.size(-1)
+                input_ids_unpad, _ = self.process_tensor(input_ids, self.pad_token_id)
+                attention_mask_unpad, _ = self.process_tensor(attention_mask, 0)
+                output = self.actor_module(input_ids=input_ids_unpad,
+                                        attention_mask=attention_mask_unpad,
+                                        pixel_values=pixel_values,
+                                        use_cache=False)  # prevent model thinks we are generating
+                logits = output.logits
+                #
+                
+                logits = logits[:, -response_length - 1:-1]  # (bsz, response_length)
+                logits = logits.div(temperature) 
+                
+                log_probs = logprobs_from_logits(logits, responses)
+                entropy = verl_F.entropy_from_logits(logits)  # (bsz, response_length)
+                
+                
+                log_probs = log_probs.reshape((1, -1))
+                entropy = entropy.reshape((1, -1))
+
+                return entropy, log_probs
                 
 
     def _forward_micro_batch_entropy(self, micro_batch, temperature) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -324,8 +362,25 @@ class RobDataParallelPPOActor(BasePPOActor):
                 return entropy
             
             elif self.config.vla == "internvl_chat":
-                # TODO: add internvl support
-                pass
+                output = self.actor_module(input_ids=input_ids_unpad,
+                                        attention_mask=attention_mask_unpad,
+                                        pixel_values=pixel_values,
+                                        use_cache=False)  # prevent model thinks we are generating
+                logits = output.logits
+                #
+                
+                
+                logits = logits[:, -response_length - 1:-1]  # (bsz, response_length)
+                logits = logits.div(temperature) 
+                
+                entropy = verl_F.entropy_from_logits(logits)  # (bsz, response_length)
+                #ADD
+
+                entropy = entropy.reshape((batch_size, traj_len,) + entropy.shape[1:])
+                mask = self.generate_traj_mask(micro_batch['finish_step'], traj_len)
+                _, entropy = self.apply_mask_with_grad_control(entropy, entropy, mask)
+                entropy = entropy.reshape((batch_size, traj_len*response_length))
+                return entropy
 
 
     def _optimizer_step(self):

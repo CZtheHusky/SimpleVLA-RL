@@ -45,6 +45,7 @@ import multiprocessing
 import gc
 from multiprocessing import Process, Queue
 from collections import defaultdict
+from verl.utils.grutopia_utils.utils import grutopia_obs_process, extract_action_vector, assemble_action_vla
 
 __all__ = ['RobHFRollout']
 
@@ -276,8 +277,8 @@ class RobHFRollout(BaseRollout):
     
     def process_input(self,inputs:list, task_descriptions:list):
         if self.config.vla == "internvl_chat":
-            # TODO: implement internvl input processing
-            pass
+            batchdata = grutopia_obs_process(inputs, task_descriptions)
+            return batchdata
         batchdata = {"input_ids":[],"attention_mask":[],"pixel_values":[]}  
         
         for i in range(len(inputs)):
@@ -331,8 +332,6 @@ class RobHFRollout(BaseRollout):
             sorted_indices = torch.argsort(padding_mask, dim=1, descending=True, stable=True)
             batchdata["input_ids"] = torch.gather(batchdata["input_ids"], 1, sorted_indices)
             batchdata["attention_mask"] = torch.gather(batchdata["attention_mask"], 1, sorted_indices)
-            
-            
             batchdata["pixel_values"] = torch.cat(batchdata["pixel_values"] , dim=0).to(device)
             assert torch.all(batchdata["attention_mask"].ne(0) == batchdata["input_ids"].ne(self.processor.tokenizer.pad_token_id))
         else:
@@ -646,29 +645,121 @@ class RobHFRollout(BaseRollout):
             return batch
         
         elif self.config.vla == "internvl_chat":
-            # TODO: add internvl support
-            pass
+            tokenizer = self.processor
+            pixel_values = prompts["pixel_values"]
+            questions = prompts['questions']
+            num_patches_list = prompts['num_patches_list']
+            gripper_states = prompts['gripper_states']
+            q_eefs = prompts['q_eefs']
+            q_grippers = prompts['q_grippers']
+            eef_transes = prompts['eef_transes']
+            eef_quats = prompts['eef_quats']
+            action_type = prompts['action_type']
+            quatEEF = prompts['quatEEF']
             
+            img_context_token_id = tokenizer.convert_tokens_to_ids('<IMG_CONTEXT>',)
+            self.module.img_context_token_id = img_context_token_id
 
-        
+            # if verbose and pixel_values is not None:
+            #     image_bs = pixel_values.shape[0]
+            #     print(f'dynamic ViT batch size: {image_bs}')
+            do_sample = prompts.get('do_sample', self.config.do_sample)
+            top_p = prompts.get('top_p', self.config.get('top_p', 1.0))
+            top_k = prompts.get('top_k', self.config.get('top_k', 0))
+            temperature = prompts.get('temperature', self.config.temperature)
+            queries = []
+            for idx, num_patches in enumerate(num_patches_list):
+                question = questions[idx]
+                if pixel_values is not None and '<image>' not in question:
+                    question = '<image>\n' + question
+                # template = get_conv_template(self.module.template)
+                template = self.module.conv_template
+                template.system_message = self.module.system_message
+                template.append_message(template.roles[0], question)
+                template.append_message(template.roles[1], None)
+                query = template.get_prompt()
+                for patches in num_patches:
+                    image_tokens = '<img>' + '<IMG_CONTEXT>' * self.module.num_image_token * patches + '</img>'
+                    query = query.replace('<image>', image_tokens, 1)
+                queries.append(query)
+
+            tokenizer.padding_side = 'left'
+            model_inputs = tokenizer(queries, return_tensors='pt', padding=True)
+            input_ids = model_inputs['input_ids'].to(self.module.device)
+            attention_mask = model_inputs['attention_mask'].to(self.module.device)
+            eos_token_id = tokenizer.convert_tokens_to_ids(template.sep.strip())
+            generation_output = self.module.generate(
+                pixel_values=pixel_values,
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                eos_token_id=eos_token_id,
+                max_new_tokens=1024,
+                do_sample=do_sample,
+                temperature=temperature,
+                top_p=top_p,
+                top_k=top_k,
+            )
+            full_seq = torch.concatenate((input_ids, generation_output), dim=-1)
+            responses = tokenizer.batch_decode(generation_output, skip_special_tokens=True)
+            string_response = [response.split(template.sep.strip())[0].strip() for response in responses]
+            actions = []
+            for idx in range(len(string_response)):
+                gripper_state = gripper_states[idx]
+                response = string_response[idx]
+                q_eef = q_eefs[idx]
+                q_gripper = q_grippers[idx]
+                eef_trans = eef_transes[idx]
+                eef_quat = eef_quats[idx]
+                action_extracted = extract_action_vector(response, action_type=action_type, quatEEF=quatEEF)
+                action = assemble_action_vla(
+                    action_extracted, 
+                    gripper_state, 
+                    q_eef, 
+                    q_gripper, 
+                    eef_trans, 
+                    eef_quat, 
+                    action_type, 
+                    quatEEF
+                )
+                actions.append(action)
+            response_attention_mask = get_eos_mask(response_id=generation_output, eos_token=eos_token_id, dtype=attention_mask.dtype)
+            attention_mask = torch.cat((attention_mask, response_attention_mask), dim=-1)
+            assert self.processor.pad_token_id is not None
+            assert input_ids.ndim == 2
+            input_ids = verl_F.pad_sequence_to_length(input_ids, max_seq_len=self.config.max_prompt_length, pad_token_id=self.processor.pad_token_id, left_pad=True)
+            assert full_seq.ndim == 2
+            full_seq = verl_F.pad_sequence_to_length(full_seq, max_seq_len=self.config.max_prompt_length, pad_token_id=self.processor.pad_token_id, left_pad=True)
+            assert attention_mask.ndim == 2
+            attention_mask = verl_F.pad_sequence_to_length(attention_mask,max_seq_len=self.config.max_prompt_length,pad_token_id=0,left_pad=True)
+            return {
+                'prompts': input_ids,
+                'responses': generation_output,
+                'input_ids': full_seq,
+                'attention_mask': attention_mask,
+                'pixel_values': torch.reshape(pixel_values, (input_ids.shape[0], -1) + pixel_values.shape[1:]),
+                'action': actions,
+            } 
+            
     def _obs_to_input(self, obs):
-        
-        if self.config.num_images_in_input > 1:
-            return {
-                "full_image": get_libero_image(obs, 224),
-                "wrist_image": get_libero_wrist_image(obs, 224),
-                "state": np.concatenate([
-                    obs["robot0_eef_pos"],
-                    quat2axisangle(obs["robot0_eef_quat"]),
-                    obs["robot0_gripper_qpos"]
-                ])
-            }
-        else:
-            return {
-                "full_image": get_libero_image(obs, 224),
-                "state": np.concatenate([
-                    obs["robot0_eef_pos"],
-                    quat2axisangle(obs["robot0_eef_quat"]),
-                    obs["robot0_gripper_qpos"]
-                ])
-            }
+        try:
+            if self.config.num_images_in_input > 1:
+                return {
+                    "full_image": get_libero_image(obs, 224),
+                    "wrist_image": get_libero_wrist_image(obs, 224),
+                    "state": np.concatenate([
+                        obs["robot0_eef_pos"],
+                        quat2axisangle(obs["robot0_eef_quat"]),
+                        obs["robot0_gripper_qpos"]
+                    ])
+                }
+            else:
+                return {
+                    "full_image": get_libero_image(obs, 224),
+                    "state": np.concatenate([
+                        obs["robot0_eef_pos"],
+                        quat2axisangle(obs["robot0_eef_quat"]),
+                        obs["robot0_gripper_qpos"]
+                    ])
+                }
+        except Exception as e:
+            return obs

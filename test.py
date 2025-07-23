@@ -1,8 +1,7 @@
-from verl.utils.vla_utils.internvl.configuration_internvl_chat import InternVLChatConfig
-from verl.utils.vla_utils.internvl.modeling_internvl_verl import InternVLForActionPrediction
-from verl.utils.vla_utils.internvl.processing_internvl import InternVLImageProcessor, InternVLProcessor
 from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig, AutoImageProcessor, AutoModelForVision2Seq, AutoProcessor, AutoModelForCausalLM
 import torch
+
+
 
 local_path = "deltaQ_backbone"
 torch_dtype = torch.bfloat16
@@ -17,4 +16,4 @@ model = AutoModelForCausalLM.from_pretrained(
 tokenizer = AutoTokenizer.from_pretrained(local_path, trust_remote_code=True, use_fast=False)
 
 processor = AutoProcessor.from_pretrained(local_path, trust_remote_code=True)
-print(model)
+

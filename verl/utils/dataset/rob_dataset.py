@@ -17,7 +17,7 @@ import os
 from typing import List, Union
 
 import pandas as pd
-
+from grmanipulation.ppo_agent.grutopia_env_wrapper import TRAIN_IDS, VAL_IDS
 import torch
 import numpy as np
 from torch.utils.data import Dataset, DataLoader
@@ -94,8 +94,7 @@ class LIBERO_Dataset(Dataset):
             self.dataframe = dataframes
             print(f'dataset len: {len(self.dataframe)}')
         else:
-            raise ValueError
-     
+            raise ValueError 
 
     def __len__(self):
         return len(self.dataframe)
@@ -106,7 +105,34 @@ class LIBERO_Dataset(Dataset):
         """
         return self.dataframe[item]
 
+class GRUTOPIA_Dataset(Dataset):
+    def __init__(
+        self, 
+        train_val="train",
+        num_trials_per_task=50,
+    ):
+        if train_val == "train":
+            env_ids = TRAIN_IDS
+        else:
+            env_ids = VAL_IDS
+        dataframes = []
 
+        for env_id in env_ids:
+            for i in range(num_trials_per_task):
+                data = {
+                    'task_suite_name': 'grutopia',
+                    'task_id': torch.tensor(env_id, dtype=torch.int64).unsqueeze(0),
+                    'trial_id': torch.tensor(i, dtype=torch.int64).unsqueeze(0)
+                }
+                dataframes.append(data)
+        self.dataframe = dataframes
+       
+    def __getitem__(self, index):
+        return self.dataframe[index]
+    
+    def __len__(self):
+        return len(self.dataframe)
+            
 
 class BufferedDataLoader:
     def __init__(self, dataloader):

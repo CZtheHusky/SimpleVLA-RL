@@ -46,6 +46,7 @@ import gc
 from multiprocessing import Process, Queue
 from collections import defaultdict
 from verl.utils.grutopia_utils.utils import grutopia_obs_process, extract_action_vector, assemble_action_vla
+from grmanipulation.ppo_agent.grutopia_env_wrapper import GRUTopiaVecEnv, ActionType
 
 __all__ = ['RobHFRollout']
 
@@ -218,7 +219,12 @@ def env_worker(task_name, task_id, trial_id, config, input_queue, output_queue, 
         output_queue.put(output_data)
         
       
-
+def grutopia_env_worker(task_id, trial_id, env_ids, input_queue, output_queue, batch_size):
+    env = GRUTopiaVecEnv(
+        num_envs=batch_size,
+        action_type=
+    )
+    
 
 class RobHFRollout(BaseRollout):
 
@@ -234,6 +240,8 @@ class RobHFRollout(BaseRollout):
                                 }
         self.processor = AutoProcessor.from_pretrained(config.pretrained_checkpoint, trust_remote_code=True)
         self.vla_preprocess()
+        if config.task_suite_name == "grutopia":
+            pass
         
         #oft add
         # unnorm_key=config.unnorm_key

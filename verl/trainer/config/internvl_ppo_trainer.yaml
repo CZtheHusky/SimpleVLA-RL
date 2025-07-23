@@ -25,7 +25,7 @@ actor_rollout_ref:
   hybrid_engine: True
   model:
     vla: internvl_chat
-    action_token_len: 7
+    action_token_len: 60  # 16
     action_chunks_len: 1
     path: deltaQ_backbone
     external_lib: null
@@ -82,6 +82,7 @@ actor_rollout_ref:
   rollout:
     vla: ${actor_rollout_ref.model.vla}
     action_chunks_len: ${actor_rollout_ref.model.action_chunks_len}
+    resize_target: [480, 480]
     experiment_name: None
     unnorm_key: 
     micro_batch_size: 1

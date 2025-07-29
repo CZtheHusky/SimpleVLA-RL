@@ -134,20 +134,18 @@ class GRUTOPIA_Dataset(Dataset):
         return len(self.dataframe)
     
 class MANISKILL_Dataset(Dataset):
-    def __init__(self, train_val="train", num_trials_per_task=50):
-        if train_val == "train":
-            env_ids = TRAIN_IDS
-        else:
-            env_ids = VAL_IDS
+    def __init__(self, train_val="train", num_envs_seeds=1024, task_ids: List[str] = ["StackCube-v1"]):
         dataframes = []
-
-        for env_id in env_ids:
-            for i in range(num_trials_per_task):
+        env_seeds = np.arange(num_envs_seeds) if train_val == "train" else np.arange(1024, 2048)
+        task_descriptions = {
+            "StackCube-v1": "stack the red cube on top of the green one",
+        }
+        for env_seed in env_seeds:
+            for task_id in task_ids:
                 data = {
                     'task_suite_name': 'maniskill',
-                    'task_name': "",
-                    'task_seed': torch.tensor(env_id, dtype=torch.int64).unsqueeze(0),
-                    'trial_id': torch.tensor(i, dtype=torch.int64).unsqueeze(0)
+                    'task_description': task_descriptions[task_id],
+                    'task_seed': torch.tensor(env_seed, dtype=torch.int64).unsqueeze(0),
                 }
                 dataframes.append(data)
         self.dataframe = dataframes

@@ -309,6 +309,7 @@ def obs_process(inputs: List, task_descriptions, task_suite: TaskSuite, **kwargs
                 }
     elif task_suite == TaskSuite.MANISKILL:
         dual_cam = kwargs.get('dual_cam', True)
+        instructions = kwargs.get("instructions", None)
         num_patches_list = []
         pixel_values = []
         questions = []
@@ -319,7 +320,7 @@ def obs_process(inputs: List, task_descriptions, task_suite: TaskSuite, **kwargs
             qposes.append(qpos)
             camera = inputs['sensor_data']["base_camera"]["rgb"][env_id].cpu().numpy()
             rescaled_qpos = np.round(qpos * 1000).astype(np.int32)
-            query = f"The current position state of the robotic arm's end gripper is as follows: {{Joint_0: {rescaled_qpos[0]}, Joint_1: {rescaled_qpos[1]}, Joint_2: {rescaled_qpos[2]}, Joint_3: {rescaled_qpos[3]}, Joint_4: {rescaled_qpos[4]}, Joint_5: {rescaled_qpos[5]}, Joint_6: {rescaled_qpos[6]}, Joint_7: {rescaled_qpos[7]}, Joint_8: {rescaled_qpos[8]}}}. What action should the robot take to get better completion of instruction: {instruction}?"
+            query = f"The current position state of the robotic arm's end gripper is as follows: {{Joint_0: {rescaled_qpos[0]}, Joint_1: {rescaled_qpos[1]}, Joint_2: {rescaled_qpos[2]}, Joint_3: {rescaled_qpos[3]}, Joint_4: {rescaled_qpos[4]}, Joint_5: {rescaled_qpos[5]}, Joint_6: {rescaled_qpos[6]}, Joint_7: {rescaled_qpos[7]}, Joint_8: {rescaled_qpos[8]}}}. What action should the robot take to get better completion of instruction: {instructions[env_id]}?"
             pixel_0 = process_image_internvl(camera)
             patch_list = []
             pixels = []

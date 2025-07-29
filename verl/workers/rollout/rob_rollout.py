@@ -45,7 +45,7 @@ import multiprocessing
 import gc
 from multiprocessing import Process, Queue
 from collections import defaultdict
-from verl.utils.grutopia_utils.utils import grutopia_obs_process, extract_action_vector, assemble_action_vla
+from verl.utils.env_utils.utils import obs_process, extract_action_vector, assemble_action_vla, action_decode, TaskSuite
 from grmanipulation.ppo_agent.grutopia_env_wrapper import GRUTopiaVecEnv, ActionType
 
 __all__ = ['RobHFRollout']
@@ -219,11 +219,11 @@ def env_worker(task_name, task_id, trial_id, config, input_queue, output_queue, 
         output_queue.put(output_data)
         
       
-def grutopia_env_worker(task_id, trial_id, env_ids, input_queue, output_queue, batch_size):
-    env = GRUTopiaVecEnv(
-        num_envs=batch_size,
-        action_type=
-    )
+# def grutopia_env_worker(task_id, trial_id, env_ids, input_queue, output_queue, batch_size):
+#     env = GRUTopiaVecEnv(
+#         num_envs=batch_size,
+#         action_type=
+#     )
     
 
 class RobHFRollout(BaseRollout):
@@ -240,8 +240,15 @@ class RobHFRollout(BaseRollout):
                                 }
         self.processor = AutoProcessor.from_pretrained(config.pretrained_checkpoint, trust_remote_code=True)
         self.vla_preprocess()
+        self.process_kwargs = {}
         if config.task_suite_name == "grutopia":
-            pass
+            self.task_suite = TaskSuite.GRUTOPIA
+        elif config.task_suite_name == "maniskill":
+            self.task_suite = TaskSuite.MANISKILL
+            if config.dual_cam:
+                self.process_kwargs['dual_cam'] = True
+            else:
+                self.process_kwargs['dual_cam'] = False
         
         #oft add
         # unnorm_key=config.unnorm_key
@@ -283,9 +290,9 @@ class RobHFRollout(BaseRollout):
         return output
     
     
-    def process_input(self,inputs:list, task_descriptions:list):
+    def process_input(self, inputs:list, task_descriptions:list):
         if self.config.vla == "internvl_chat":
-            batchdata = grutopia_obs_process(inputs, task_descriptions)
+            batchdata = obs_process(inputs, task_descriptions, self.task_suite, **self.process_kwargs)
             return batchdata
         batchdata = {"input_ids":[],"attention_mask":[],"pixel_values":[]}  
         
@@ -657,13 +664,6 @@ class RobHFRollout(BaseRollout):
             pixel_values = prompts["pixel_values"]
             questions = prompts['questions']
             num_patches_list = prompts['num_patches_list']
-            gripper_states = prompts['gripper_states']
-            q_eefs = prompts['q_eefs']
-            q_grippers = prompts['q_grippers']
-            eef_transes = prompts['eef_transes']
-            eef_quats = prompts['eef_quats']
-            action_type = prompts['action_type']
-            quatEEF = prompts['quatEEF']
             
             img_context_token_id = tokenizer.convert_tokens_to_ids('<IMG_CONTEXT>',)
             self.module.img_context_token_id = img_context_token_id
@@ -710,26 +710,7 @@ class RobHFRollout(BaseRollout):
             full_seq = torch.concatenate((input_ids, generation_output), dim=-1)
             responses = tokenizer.batch_decode(generation_output, skip_special_tokens=True)
             string_response = [response.split(template.sep.strip())[0].strip() for response in responses]
-            actions = []
-            for idx in range(len(string_response)):
-                gripper_state = gripper_states[idx]
-                response = string_response[idx]
-                q_eef = q_eefs[idx]
-                q_gripper = q_grippers[idx]
-                eef_trans = eef_transes[idx]
-                eef_quat = eef_quats[idx]
-                action_extracted = extract_action_vector(response, action_type=action_type, quatEEF=quatEEF)
-                action = assemble_action_vla(
-                    action_extracted, 
-                    gripper_state, 
-                    q_eef, 
-                    q_gripper, 
-                    eef_trans, 
-                    eef_quat, 
-                    action_type, 
-                    quatEEF
-                )
-                actions.append(action)
+            actions = action_decode(prompts, string_response, self.task_suite)
             response_attention_mask = get_eos_mask(response_id=generation_output, eos_token=eos_token_id, dtype=attention_mask.dtype)
             attention_mask = torch.cat((attention_mask, response_attention_mask), dim=-1)
             assert self.processor.pad_token_id is not None

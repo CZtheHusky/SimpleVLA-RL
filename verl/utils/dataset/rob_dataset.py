@@ -132,6 +132,31 @@ class GRUTOPIA_Dataset(Dataset):
     
     def __len__(self):
         return len(self.dataframe)
+    
+class MANISKILL_Dataset(Dataset):
+    def __init__(self, train_val="train", num_trials_per_task=50):
+        if train_val == "train":
+            env_ids = TRAIN_IDS
+        else:
+            env_ids = VAL_IDS
+        dataframes = []
+
+        for env_id in env_ids:
+            for i in range(num_trials_per_task):
+                data = {
+                    'task_suite_name': 'maniskill',
+                    'task_name': "",
+                    'task_seed': torch.tensor(env_id, dtype=torch.int64).unsqueeze(0),
+                    'trial_id': torch.tensor(i, dtype=torch.int64).unsqueeze(0)
+                }
+                dataframes.append(data)
+        self.dataframe = dataframes
+
+    def __getitem__(self, index):
+        return self.dataframe[index]
+
+    def __len__(self):
+        return len(self.dataframe)
             
 
 class BufferedDataLoader:

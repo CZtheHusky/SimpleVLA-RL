@@ -57,6 +57,6 @@ tmp_response = "2 4 1 3 0 -2 3 40"
 num_tokens = len(tokenizer.encode(tmp_response))
 print(f"Response: {tmp_response}, Num Tokens: {num_tokens}")
 
-tmp_response = "2 -4 1 3 0 -2 -3 40"
+tmp_response = "{2 -4 1 3 0 -2 -3}"
 num_tokens = len(tokenizer.encode(tmp_response))
 print(f"Response: {tmp_response}, Num Tokens: {num_tokens}")

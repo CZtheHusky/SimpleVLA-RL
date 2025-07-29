@@ -24,8 +24,58 @@ class ActionType(Enum):
     ABS_JOINT = 2
     DELTA_JOINT = 3
     
+class TaskSuite(Enum):
+    MANISKILL = 0
+    GRUTOPIA = 1
+    
 def action_to_str(action, num_floats: int = 4):
     return [np.round(a, num_floats) for a in action.values()] if isinstance(action, dict) else [np.round(a, num_floats) for a in action]
+
+def parse_and_validate_vector(input_str: str):
+    """
+    解析并验证一个字符串，期望其格式为包含7个空格分隔的数字的花括号包围的向量。
+
+    Args:
+        input_str: 模型的原始输出字符串。
+
+    Returns:
+        如果格式完全正确，则返回一个包含7个整数的列表。
+        如果格式有任何问题（缺少花括号、数字数量不对、包含非数字内容等），则返回 None。
+    """
+    # 1. 基础检查：确保输入是字符串
+    if not isinstance(input_str, str):
+        return None
+
+    # 2. 预处理：去除首尾多余的空白字符
+    s = input_str.strip()
+
+    # 3. 验证格式：是否被花括号包围
+    if not (s.startswith('{') and s.endswith('}')):
+        return None
+
+    # 4. 提取花括号内的内容
+    content = s[1:-1].strip()
+    
+    # 如果内容为空（例如输入是 "{}" 或 "{ }"），也视为无效
+    if not content:
+        return None
+
+    # 5. 分割内容
+    parts = content.split()
+
+    # 6. 验证数量：是否正好是7个数字
+    if len(parts) != 7:
+        return None
+
+    # 7. 验证内容：尝试将所有部分转换为整数
+    try:
+        vector = [int(p) for p in parts]
+        return np.array(vector, dtype=np.float32)  # 返回一个整数类型的NumPy数组
+    except ValueError:
+        # 如果任何一部分无法转换为整数（例如 "1.5", "abc"），则捕获异常
+        print("Error response:", input_str)
+        return None
+
 
 # 统计并画图 (Updated to calculate on 99th percentile data)
 def plot_and_print_stats(arr, name, save_parent):
@@ -103,6 +153,54 @@ def plot_and_print_stats(arr, name, save_parent):
     
     return statistics_dict
 
+def action_decode(prompts, string_response, task_suite: TaskSuite):
+    if task_suite == TaskSuite.GRUTOPIA:
+        gripper_states = prompts['gripper_states']
+        q_eefs = prompts['q_eefs']
+        q_grippers = prompts['q_grippers']
+        eef_transes = prompts['eef_transes']
+        eef_quats = prompts['eef_quats']
+        action_type = prompts['action_type']
+        quatEEF = prompts['quatEEF']
+        actions = []
+        for idx in range(len(string_response)):
+            gripper_state = gripper_states[idx]
+            response = string_response[idx]
+            q_eef = q_eefs[idx]
+            q_gripper = q_grippers[idx]
+            eef_trans = eef_transes[idx]
+            eef_quat = eef_quats[idx]
+            action_extracted = extract_action_vector(response, action_type=action_type, quatEEF=quatEEF)
+            action = assemble_action_vla(
+                action_extracted, 
+                gripper_state, 
+                q_eef, 
+                q_gripper, 
+                eef_trans, 
+                eef_quat, 
+                action_type, 
+                quatEEF
+            )
+            actions.append(action)
+    elif task_suite == TaskSuite.MANISKILL:
+        qposes = prompts['qposes']
+        actions = []
+        for idx in range(len(string_response)):
+            response = string_response[idx]
+            action_extracted = parse_and_validate_vector(response)
+            if action_extracted is None:
+                action_extracted = np.zeros(7, dtype=np.float64)
+                if qposes[idx][-1] >= 0.037:
+                    action_extracted[-1] = 1
+                else:
+                    action_extracted[-1] = -1
+            else:
+                action_extracted[:-1] = action_extracted[:-1] / 1000
+            actions.append(action_extracted)
+    return actions
+        
+
+
 def assemble_action_vla(
     action_extracted: np.ndarray,
     gripper_state: int = None,  # 0: closed, 1: open
@@ -150,64 +248,107 @@ def assemble_action_vla(
     return action
 
 
-def grutopia_obs_process(inputs: List, task_descriptions, **kwargs):
-    num_patches_list = []
-    pixel_values = []
-    questions = []
-    gripper_states = []
-    q_eefs = []
-    q_grippers = []
-    eef_transes = []
-    eef_quats = []
-    for idx in range(len(inputs)):
-        obs = inputs[idx]
-        instruction = task_descriptions[idx]
-        obs = obs['franka_robot']
-        q_eef = obs['joints_state']['positions'][:-2]
-        q_gripper = obs['joints_state']['positions'][-2:]
-        instruction = obs['instruction'].lower().rstrip(string.punctuation).lstrip()
-        eef_trans = obs['eef_pose']['local_pose'][0]
-        eef_quat = obs['eef_pose']['local_pose'][1]
-        gripper_state = get_gripper_state(q_gripper)
-        q_eefs.append(q_eef)
-        q_grippers.append(q_gripper)
-        gripper_states.append(gripper_state)
-        eef_transes.append(eef_trans)
-        eef_quats.append(eef_quat)
-        query = generate_query_str(
-            gripper_state=gripper_state,
-            q_eef=q_eef,
-            q_gripper=q_gripper,
-            instruction=instruction,
-            eef_trans=eef_trans,
-            eef_quat=eef_quat,
-            no_state=kwargs.get('no_state', False),
-            action_type=kwargs.get('action_type', ActionType.DELTA_JOINT),
-            quatEEF=kwargs.get('quatEEF', False),
-        )
-        query = "<image><image>" + query
-        camera_0 = obs['sensors']['obs_camera']['rgb']
-        wrist_camera = obs['sensors']['realsense']['rgb']
-        pixel_0 = process_image_internvl(camera_0)
-        pixel_1 = process_image_internvl(wrist_camera)
-        patch_list = [pixel_0.size(0), pixel_1.size(0)]
-        pixels = torch.cat((pixel_0, pixel_1), dim=0)
-        questions.append(query)
-        pixel_values.append(pixels)
-        num_patches_list.append(patch_list)
-    pixel_values = torch.cat(pixel_values, dim=0)
-    return {
-                "pixel_values": pixel_values,
-                "questions": questions,
-                "num_patches_list": num_patches_list,
-                "gripper_states": gripper_states,
-                "q_eefs": q_eefs,
-                "q_grippers": q_grippers,
-                'eef_transes': eef_transes,
-                "eef_quats": eef_quats,
-                'action_type': kwargs.get('action_type', ActionType.DELTA_JOINT),
-                'quatEEF': kwargs.get('quatEEF', False),
-            }
+def obs_process(inputs: List, task_descriptions, task_suite: TaskSuite, **kwargs):
+    if task_suite == TaskSuite.GRUTOPIA:
+        num_patches_list = []
+        pixel_values = []
+        questions = []
+        gripper_states = []
+        q_eefs = []
+        q_grippers = []
+        eef_transes = []
+        eef_quats = []
+        for idx in range(len(inputs)):
+            obs = inputs[idx]
+            instruction = task_descriptions[idx]
+            obs = obs['franka_robot']
+            q_eef = obs['joints_state']['positions'][:-2]
+            q_gripper = obs['joints_state']['positions'][-2:]
+            instruction = obs['instruction'].lower().rstrip(string.punctuation).lstrip()
+            eef_trans = obs['eef_pose']['local_pose'][0]
+            eef_quat = obs['eef_pose']['local_pose'][1]
+            gripper_state = get_gripper_state(q_gripper)
+            q_eefs.append(q_eef)
+            q_grippers.append(q_gripper)
+            gripper_states.append(gripper_state)
+            eef_transes.append(eef_trans)
+            eef_quats.append(eef_quat)
+            query = generate_query_str(
+                gripper_state=gripper_state,
+                q_eef=q_eef,
+                q_gripper=q_gripper,
+                instruction=instruction,
+                eef_trans=eef_trans,
+                eef_quat=eef_quat,
+                no_state=kwargs.get('no_state', False),
+                action_type=kwargs.get('action_type', ActionType.DELTA_JOINT),
+                quatEEF=kwargs.get('quatEEF', False),
+            )
+            query = "<image><image>" + query
+            camera_0 = obs['sensors']['obs_camera']['rgb']
+            wrist_camera = obs['sensors']['realsense']['rgb']
+            pixel_0 = process_image_internvl(camera_0)
+            pixel_1 = process_image_internvl(wrist_camera)
+            patch_list = [pixel_0.size(0), pixel_1.size(0)]
+            pixels = torch.cat((pixel_0, pixel_1), dim=0)
+            questions.append(query)
+            pixel_values.append(pixels)
+            num_patches_list.append(patch_list)
+        pixel_values = torch.cat(pixel_values, dim=0)
+        return {
+                    "pixel_values": pixel_values,
+                    "questions": questions,
+                    "num_patches_list": num_patches_list,
+                    "gripper_states": gripper_states,
+                    "q_eefs": q_eefs,
+                    "q_grippers": q_grippers,
+                    'eef_transes': eef_transes,
+                    "eef_quats": eef_quats,
+                    'action_type': kwargs.get('action_type', ActionType.DELTA_JOINT),
+                    'quatEEF': kwargs.get('quatEEF', False),
+                }
+    elif task_suite == TaskSuite.MANISKILL:
+        dual_cam = kwargs.get('dual_cam', True)
+        num_patches_list = []
+        pixel_values = []
+        questions = []
+        qposes = []
+        num_envs = inputs["agent"]["qpos"].shape[0]
+        for env_id in range(num_envs):
+            qpos = inputs["agent"]["qpos"][env_id].cpu().numpy()
+            qposes.append(qpos)
+            camera = inputs['sensor_data']["base_camera"]["rgb"][env_id].cpu().numpy()
+            rescaled_qpos = np.round(qpos * 1000).astype(np.int32)
+            query = f"The current position state of the robotic arm's end gripper is as follows: {{Joint_0: {rescaled_qpos[0]}, Joint_1: {rescaled_qpos[1]}, Joint_2: {rescaled_qpos[2]}, Joint_3: {rescaled_qpos[3]}, Joint_4: {rescaled_qpos[4]}, Joint_5: {rescaled_qpos[5]}, Joint_6: {rescaled_qpos[6]}, Joint_7: {rescaled_qpos[7]}, Joint_8: {rescaled_qpos[8]}}}. What action should the robot take to get better completion of instruction: {instruction}?"
+            pixel_0 = process_image_internvl(camera)
+            patch_list = []
+            pixels = []
+            patch_list.append(pixel_0.size(0))
+            pixels.append(pixel_0)
+            if dual_cam:
+                query = "<image><image>" + query
+                hand_camera = inputs['sensor_data']["hand_camera"]["rgb"][env_id].cpu().numpy()
+                pixel_1 = process_image_internvl(hand_camera)
+                patch_list.append(pixel_1.size(0))
+                pixels.append(pixel_1)
+            else:
+                query = "<image>" + query
+            if len(pixels) == 1:
+                pixels = pixels[0]
+            else:
+                pixels = torch.cat(pixels, dim=0)
+            questions.append(query)
+            pixel_values.append(pixels)
+            num_patches_list.append(patch_list)
+        pixel_values = torch.cat(pixel_values, dim=0)
+        return {
+            "pixel_values": pixel_values,
+            "questions": questions,
+            "num_patches_list": num_patches_list,
+            "qposes": qposes,
+        }
+    else:
+        raise NotImplementedError
 
 
 

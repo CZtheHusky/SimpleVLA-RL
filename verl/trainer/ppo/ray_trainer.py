@@ -291,20 +291,31 @@ class RayTrainer(object):
 
     def _create_dataloader(self):   # next fix
         from torch.utils.data import DataLoader
+        from verl.utils.dataset.rob_dataset import collate_fn
         # TODO: we have to make sure the batch size is divisible by the dp size
-        from verl.utils.dataset.rob_dataset import LIBERO_Dataset, collate_fn
-        self.train_dataset = LIBERO_Dataset(self.config.data.task_suite_name,
+        if "libero" in self.config.data.task_suite_name:
+            from verl.utils.dataset.rob_dataset import LIBERO_Dataset
+            self.train_dataset = LIBERO_Dataset(self.config.data.task_suite_name,
+                                                num_trials_per_task=self.config.data.num_trials_per_task,
+                                                train_val ="train")
+            self.val_dataset = LIBERO_Dataset(self.config.data.task_suite_name,
                                             num_trials_per_task=self.config.data.num_trials_per_task,
-                                            train_val ="train")
+                                            train_val ="valid")
+        elif self.config.data.task_suite_name == "grutopia":
+            from verl.utils.dataset.rob_dataset import GRUTOPIA_Dataset
+            self.train_dataset = GRUTOPIA_Dataset('train')
+            self.val_datatset = GRUTOPIA_Dataset('valid')
+        elif self.config.data.task_suite_name == "maniskill":
+            from verl.utils.dataset.rob_dataset import MANISKILL_Dataset
+            self.train_dataset = MANISKILL_Dataset('train', num_envs_seeds=self.config.data.num_envs_seeds, task_ids= self.config.data.task_ids)
+            self.val_dataset = MANISKILL_Dataset('valid', num_envs_seeds=self.config.data.num_envs_seeds, task_ids= self.config.data.task_ids)
+        else:
+            raise NotImplementedError(f'Unsupported task suite: {self.config.data.task_suite_name}')
         self.train_dataloader = BufferedDataLoader(DataLoader(dataset=self.train_dataset,
                                            batch_size=int(self.config.data.train_batch_size*self.config.data.oversample_factor),
                                            shuffle=True,
                                            drop_last=True,
                                            collate_fn=collate_fn))
-
-        self.val_dataset = LIBERO_Dataset(self.config.data.task_suite_name,
-                                        num_trials_per_task=self.config.data.num_trials_per_task,
-                                        train_val ="valid")
         self.val_dataloader = DataLoader(dataset=self.val_dataset,
                                          batch_size=self.config.data.val_batch_size,
                                          shuffle=True,

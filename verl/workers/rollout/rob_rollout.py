@@ -45,7 +45,9 @@ import multiprocessing
 import gc
 from multiprocessing import Process, Queue
 from collections import defaultdict
+from enum import Enum
 from verl.utils.env_utils.utils import obs_process, extract_action_vector, assemble_action_vla, action_decode, TaskSuite
+from verl.workers.rollout.env_workers.libero_env_worker import center_crop_image
 from grmanipulation.ppo_agent.grutopia_env_wrapper import GRUTopiaVecEnv, ActionType
 
 __all__ = ['RobHFRollout']
@@ -55,176 +57,10 @@ OPENVLA_V01_SYSTEM_PROMPT = (
     "The assistant gives helpful, detailed, and polite answers to the user's questions."
 )
 
-def crop_and_resize(image, crop_scale, batch_size):
-    """
-    Center-crops an image to have area `crop_scale` * (original image area), and then resizes back
-    to original size. We use the same logic seen in the `dlimp` RLDS datasets wrapper to avoid
-    distribution shift at test time.
+class ENV_TYPE(Enum):
+    VENV = 0
+    SINGLE_ENV = 1
 
-    Args:
-        image: TF Tensor of shape (batch_size, H, W, C) or (H, W, C) and datatype tf.float32 with
-               values between [0,1].
-        crop_scale: The area of the center crop with respect to the original image.
-        batch_size: Batch size.
-    """
-    # Convert from 3D Tensor (H, W, C) to 4D Tensor (batch_size, H, W, C)
-    assert image.shape.ndims == 3 or image.shape.ndims == 4
-    expanded_dims = False
-    if image.shape.ndims == 3:
-        image = tf.expand_dims(image, axis=0)
-        expanded_dims = True
-
-    # Get height and width of crop
-    new_heights = tf.reshape(tf.clip_by_value(tf.sqrt(crop_scale), 0, 1), shape=(batch_size,))
-    new_widths = tf.reshape(tf.clip_by_value(tf.sqrt(crop_scale), 0, 1), shape=(batch_size,))
-
-    # Get bounding box representing crop
-    height_offsets = (1 - new_heights) / 2
-    width_offsets = (1 - new_widths) / 2
-    bounding_boxes = tf.stack(
-        [
-            height_offsets,
-            width_offsets,
-            height_offsets + new_heights,
-            width_offsets + new_widths,
-        ],
-        axis=1,
-    )
-
-    # Crop and then resize back up
-    image = tf.image.crop_and_resize(image, bounding_boxes, tf.range(batch_size), (224, 224))
-
-    # Convert back to 3D Tensor (H, W, C)
-    if expanded_dims:
-        image = image[0]
-
-    return image
-
-def center_crop_image(image):
-    batch_size = 1
-    crop_scale = 0.9
-
-    # Convert to TF Tensor and record original data type (should be tf.uint8)
-    image = tf.convert_to_tensor(np.array(image))
-    orig_dtype = image.dtype
-
-    # Convert to data type tf.float32 and values between [0,1]
-    image = tf.image.convert_image_dtype(image, tf.float32)
-
-    # Crop and then resize back to original size
-    image = crop_and_resize(image, crop_scale, batch_size)
-
-    # Convert back to original data type
-    image = tf.clip_by_value(image, 0, 1)
-    image = tf.image.convert_image_dtype(image, orig_dtype, saturate=True)
-
-    # Convert back to PIL Image
-    image = Image.fromarray(image.numpy())
-    image = image.convert("RGB")
-    return image
-
-
-
-def env_worker(task_name, task_id, trial_id, config, input_queue, output_queue, is_valid, global_steps, max_steps):
-    
-    benchmark_dict = benchmark.get_benchmark_dict()
-    task_suite = benchmark_dict[task_name]()
-    task = task_suite.get_task(task_id)
-    initial_states = task_suite.get_task_init_states(task_id)
-    initial_state = initial_states[trial_id]
-    
-    
-    env = None
-    while True:
-        try:
-            env, task_description = get_libero_env(task, config.model_family, resolution=256)
-            break  
-        except:
-            print(f"*** env initialization failed ***")
-            if env is not None:
-                try:
-                    env.close()  
-                except Exception as e:
-                    print(f"error when close the env: {e}")
-            torch.cuda.empty_cache()
-            gc.collect()
-            print("gc collect finish")
-    
-    env.reset()
-    obs = env.set_init_state(initial_state)
-    
-    
-    t = 0
-    valid_images = []
-    while t < config.num_steps_wait:
-        obs, _, _, _ = env.step(get_libero_dummy_action(config.model_family))
-        t += 1
-        
-    if is_valid:
-        img = obs["agentview_image"][::-1, ::-1]
-        valid_images.append(img)
-    
-    output_queue.put({
-        'type': 'init',
-        'obs': obs,
-        "task_description":task_description,
-        'valid_images': valid_images.copy(),
-        'task_file_name': f"{task_name}_task_{task_id}_trial_{trial_id}",
-        'active': True,
-        'complete': False,
-        'finish_step': 0
-    })
-    
-    active = True
-    complete = False
-    finish_step = 0
-    
-    while True:
-        
-        action = input_queue.get()
-        if action is None:
-            env.close()
-            output_queue.put({'type': 'terminate'})
-            break
-        
-        
-        step_images = []
-        for i in range(len(action)):
-            a = action[i]
-            normalized_action = normalize_gripper_action(a, binarize=True)
-            inverted_action = invert_gripper_action(normalized_action)
-            obs, reward, done, info = env.step(inverted_action.tolist())
-            
-            if is_valid:
-                img = obs["agentview_image"][::-1, ::-1]
-                step_images.append(img)
-            
-            
-            finish_step += 1
-            #if done or finish_step >= config.max_steps[config.task_suite_name]:
-            if done or finish_step >= max_steps:
-                active = False
-                complete = done
-                break
-        
-        
-        output_data = {
-            'type': 'step',
-            'obs': obs,
-            'active': active,
-            'complete': complete,
-            'finish_step': finish_step,
-            'valid_images': step_images.copy() if is_valid else []
-        }
-        output_queue.put(output_data)
-        
-      
-# def grutopia_env_worker(task_id, trial_id, env_ids, input_queue, output_queue, batch_size):
-#     env = GRUTopiaVecEnv(
-#         num_envs=batch_size,
-#         action_type=
-#     )
-    
 
 class RobHFRollout(BaseRollout):
 
@@ -232,23 +68,38 @@ class RobHFRollout(BaseRollout):
         super().__init__()
         self.config = config
         self.module = module
-        self.max_steps = {   "libero_spatial": 512,   # max step length 193
-                                    "libero_object": 512,    # max step length 254
-                                    "libero_goal": 512,      # max step length 270
-                                    "libero_10": 512,        # max step length 505
-                                    "libero_90": 512         # max step length 373 org 400 now change to 512
-                                }
         self.processor = AutoProcessor.from_pretrained(config.pretrained_checkpoint, trust_remote_code=True)
+        if config.vla == "internvl_chat":
+            self.response_length = 16 if config.response_length is None else config.response_length
         self.vla_preprocess()
         self.process_kwargs = {}
         if config.task_suite_name == "grutopia":
             self.task_suite = TaskSuite.GRUTOPIA
+            self.env_type = ENV_TYPE.VENV
+            from verl.workers.rollout.env_workers.grutopia_env_worker import env_worker
         elif config.task_suite_name == "maniskill":
             self.task_suite = TaskSuite.MANISKILL
             if config.dual_cam:
                 self.process_kwargs['dual_cam'] = True
             else:
                 self.process_kwargs['dual_cam'] = False
+            self.env_type = ENV_TYPE.VENV
+            self.max_steps = {
+                "StackCube-v1": 200,
+            }
+            from verl.workers.rollout.env_workers.maniskill_env_worker import env_worker
+        elif "libero" in config.task_suite_name:
+            self.max_steps = {   
+                "libero_spatial": 512,   # max step length 193
+                "libero_object": 512,    # max step length 254
+                "libero_goal": 512,      # max step length 270
+                "libero_10": 512,        # max step length 505
+                "libero_90": 512         # max step length 373 org 400 now change to 512
+            }
+            self.task_suite = TaskSuite.LIBERO
+            self.env_type = ENV_TYPE.SINGLE_ENV
+            from verl.workers.rollout.env_workers.libero_env_worker import env_worker
+        self.env_worker = env_worker
         
         #oft add
         # unnorm_key=config.unnorm_key
@@ -272,7 +123,7 @@ class RobHFRollout(BaseRollout):
         if self.config.vla in ["openvla-oft"]:
             if  self.config.unnorm_key not in self.module.norm_stats and f"{self.config.unnorm_key}_no_noops" in self.module.norm_stats:
                 self.config.unnorm_key = f"{self.config.unnorm_key}_no_noops"
-            assert self.config.unnorm_key in self.module.norm_stats, f"Action un-norm key {unnorm_key} not found in VLA `norm_stats`!"
+            assert self.config.unnorm_key in self.module.norm_stats, f"Action un-norm key {self.config.unnorm_key} not found in VLA `norm_stats`!"
 
 
     def generate_sequences(self, prompts):
@@ -355,9 +206,129 @@ class RobHFRollout(BaseRollout):
 
         return batchdata
    
-    
-        
     def _generate_minibatch(self, prompts):
+        if self.env_type == ENV_TYPE.SINGLE_ENV:
+            return self._generate_minibatch_libero(prompts)
+        elif self.env_type == ENV_TYPE.VENV:
+            return self._venv_generate_minibatch(prompts)
+            
+    def _venv_generate_minibatch(self, prompts):
+        self.module.eval()
+        meta_info = prompts.meta_info
+        n_samples = meta_info.get('n_samples', 1)
+        env_unique_id = prompts.batch['env_unique_id'].repeat_interleave(n_samples, dim=0)
+        task_suite_name = prompts.non_tensor_batch['task_suite_name']
+        task_instruction = np.repeat(prompts.non_tensor_batch['task_instruction'], n_samples)
+        env_id = np.repeat(prompts.non_tensor_batch['env_id'], n_samples)
+        is_valid = meta_info.get('n_samples') is None
+        global_steps = meta_info.get('global_steps', 0) if is_valid else 0
+        max_steps = self.max_steps[self.config.task_suite_name]
+        batch_size = env_unique_id.size(0)    # Num of grpo samples
+
+        input_q = Queue()
+        output_q = Queue()
+        p = Process(
+            target=self.env_worker,
+            args=(task_suite_name, env_id, env_unique_id, task_instruction, input_q, output_q, is_valid, global_steps, max_steps)
+        )
+        p.start()
+        task_records = []
+        valid_video = defaultdict(list)
+        
+        init_data = output_q.get(timeout=120)
+        assert init_data['type'] == 'init'
+        task_instructions = init_data["task_instructions"]
+        inputs = init_data['obs']
+        task_records = {
+            "complete": init_data['complete'],
+            "finish_step": init_data['finish_step'],
+            "task_file_name": init_data['task_file_name']
+        }
+        if is_valid:
+            for venv_index, taskfn in enumerate(init_data['task_file_name']):
+                valid_video[taskfn].append(init_data['valid_images'][venv_index])
+        vla_history = []
+        step = 0
+        is_already_done = np.zeros(len(env_unique_id), dtype=bool)
+        while step < max_steps:
+            current_inputs = inputs
+            current_task_instructions = task_instructions
+            vla_input = self.process_input(current_inputs, current_task_instructions)
+            vla_input.update(meta_info)
+            vla_output = self._generate_one_step(vla_input)
+            actions = vla_output["action"]
+            
+            step_data = {
+                    "responses": vla_output["responses"],
+                    "input_ids": vla_output["input_ids"],
+                    "attention_mask": vla_output["attention_mask"],
+                    "pixel_values": vla_output["pixel_values"],
+                    "action": actions,
+                    "step": step
+                }
+            vla_history.append(step_data)
+            input_q.put(actions)
+            output = output_q.get(timeout=30)
+            is_complete = output['complete']
+            finish_step = output['finish_step']
+            for venv_index in range(len(is_already_done)):
+                if not is_already_done[venv_index]:
+                    if is_complete[venv_index]:
+                        is_already_done[venv_index] = True
+                    task_records['complete'][venv_index] = is_complete[venv_index]
+                    task_records['finish_step'][venv_index] = finish_step[venv_index]
+                    if is_valid:
+                        task_file_name = task_records['task_file_name'][venv_index]
+                        valid_video[task_file_name].append(output['valid_images'][venv_index])
+            assert output['type'] == 'step'
+            inputs = output['obs']
+            step += self.config.action_chunks_len
+        input_q.put(None)
+        p.join(timeout=20)
+        if p.is_alive():
+            p.terminate()
+        torch.cuda.empty_cache()
+        del input_q
+        del output_q
+        if is_valid:
+            for task_file, images in valid_video.items():
+                complete = any(r['complete'] for r in task_records if r['task_file_name'] == task_file)
+                save_rollout_video(
+                    images,
+                    self.config.experiment_name,
+                    task_file,
+                    global_steps,
+                    complete
+                )    
+        self.module.train()
+        
+        batch = {
+                'responses': [],
+                'input_ids': [],  # here input_ids become the whole sentences
+                'attention_mask': [],
+                'pixel_values': []
+            }
+        for k in ["responses", "input_ids", "attention_mask", "pixel_values"]:
+            for h in vla_history:
+                batch[k].append(h[k]) 
+                    
+        for k,v in batch.items():
+            batch[k] = torch.stack(v,dim=1) 
+  
+        
+        for k in task_records.keys():
+            batch[k] = task_records[k]
+        
+        batch["complete"] = torch.tensor(batch["complete"], dtype=torch.bool, device=batch['responses'].device)
+        batch["finish_step"] = torch.tensor(batch["finish_step"], dtype=torch.int64, device=batch['responses'].device)
+        
+        output_batch = TensorDict(
+            batch,
+            batch_size=batch_size)
+        return DataProto(batch=output_batch)     
+                           
+        
+    def _generate_minibatch_libero(self, prompts):
         self.module.eval()
         meta_info = prompts.meta_info
         n_samples = meta_info.get('n_samples', 1)
@@ -365,7 +336,7 @@ class RobHFRollout(BaseRollout):
         trial_id = prompts.batch['trial_id'].repeat_interleave(n_samples, dim=0)
         task_suite_name = np.repeat(prompts.non_tensor_batch['task_suite_name'], n_samples)
         max_steps = self.max_steps[self.config.task_suite_name]
-        batch_size = task_id.size(0)
+        batch_size = task_id.size(0)    # Num of grpo samples
         is_valid = meta_info.get('n_samples') is None
         global_steps = meta_info.get('global_steps', 0) if is_valid else 0
         
@@ -380,7 +351,7 @@ class RobHFRollout(BaseRollout):
             input_q = Queue()
             output_q = Queue()
             p = Process(
-                target=env_worker,
+                target=self.env_worker,
                 args=(task_name, t_id, tr_id, self.config, input_q, output_q, is_valid, global_steps, max_steps)
             )
             p.start()
@@ -429,7 +400,7 @@ class RobHFRollout(BaseRollout):
                 }
             vla_history.append(step_data)
             
-            for  idx in active_indices:
+            for idx in active_indices:
                 input_queues[idx].put(actions[idx])
             
             new_inputs = inputs.copy()
@@ -641,7 +612,7 @@ class RobHFRollout(BaseRollout):
             
             assert self.processor.tokenizer.pad_token_id is not None
             assert prompt.ndim == 2
-            prompt = verl_F.pad_sequence_to_length(prompt,max_seq_len=self.config.max_prompt_length,pad_token_id=self.processor.tokenizer.pad_token_id,left_pad=True)
+            prompt = verl_F.pad_sequence_to_length(prompt, max_seq_len=self.config.max_prompt_length,pad_token_id=self.processor.tokenizer.pad_token_id,left_pad=True)
             assert seq.ndim == 2
             seq = verl_F.pad_sequence_to_length(seq,max_seq_len=self.config.max_prompt_length,pad_token_id=self.processor.tokenizer.pad_token_id,left_pad=True)
             assert attention_mask.ndim == 2
@@ -696,20 +667,28 @@ class RobHFRollout(BaseRollout):
             input_ids = model_inputs['input_ids'].to(self.module.device)
             attention_mask = model_inputs['attention_mask'].to(self.module.device)
             eos_token_id = tokenizer.convert_tokens_to_ids(template.sep.strip())
-            generation_output = self.module.generate(
-                pixel_values=pixel_values,
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                eos_token_id=eos_token_id,
-                max_new_tokens=1024,
-                do_sample=do_sample,
-                temperature=temperature,
-                top_p=top_p,
-                top_k=top_k,
-            )
+            if isinstance(self.module, FSDP):
+                # recurse need to set to False according to https://github.com/pytorch/pytorch/issues/100069
+                param_ctx = FSDP.summon_full_params(self.module, writeback=False, recurse=False)
+            
+            with param_ctx:
+                with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
+                    generation_output = self.module.generate(
+                        pixel_values=pixel_values,
+                        input_ids=input_ids,
+                        attention_mask=attention_mask,
+                        eos_token_id=eos_token_id,
+                        max_new_tokens=self.response_length,
+                        do_sample=do_sample,
+                        temperature=temperature,
+                        top_p=top_p,
+                        top_k=top_k,
+                    )
             full_seq = torch.concatenate((input_ids, generation_output), dim=-1)
             responses = tokenizer.batch_decode(generation_output, skip_special_tokens=True)
             string_response = [response.split(template.sep.strip())[0].strip() for response in responses]
+            for response in string_response:
+                print(response)
             actions = action_decode(prompts, string_response, self.task_suite)
             response_attention_mask = get_eos_mask(response_id=generation_output, eos_token=eos_token_id, dtype=attention_mask.dtype)
             attention_mask = torch.cat((attention_mask, response_attention_mask), dim=-1)
@@ -730,25 +709,22 @@ class RobHFRollout(BaseRollout):
             } 
             
     def _obs_to_input(self, obs):
-        try:
-            if self.config.num_images_in_input > 1:
-                return {
-                    "full_image": get_libero_image(obs, 224),
-                    "wrist_image": get_libero_wrist_image(obs, 224),
-                    "state": np.concatenate([
-                        obs["robot0_eef_pos"],
-                        quat2axisangle(obs["robot0_eef_quat"]),
-                        obs["robot0_gripper_qpos"]
-                    ])
-                }
-            else:
-                return {
-                    "full_image": get_libero_image(obs, 224),
-                    "state": np.concatenate([
-                        obs["robot0_eef_pos"],
-                        quat2axisangle(obs["robot0_eef_quat"]),
-                        obs["robot0_gripper_qpos"]
-                    ])
-                }
-        except Exception as e:
-            return obs
+        if self.config.num_images_in_input > 1:
+            return {
+                "full_image": get_libero_image(obs, 224),
+                "wrist_image": get_libero_wrist_image(obs, 224),
+                "state": np.concatenate([
+                    obs["robot0_eef_pos"],
+                    quat2axisangle(obs["robot0_eef_quat"]),
+                    obs["robot0_gripper_qpos"]
+                ])
+            }
+        else:
+            return {
+                "full_image": get_libero_image(obs, 224),
+                "state": np.concatenate([
+                    obs["robot0_eef_pos"],
+                    quat2axisangle(obs["robot0_eef_quat"]),
+                    obs["robot0_gripper_qpos"]
+                ])
+            }

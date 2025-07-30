@@ -27,6 +27,7 @@ class ActionType(Enum):
 class TaskSuite(Enum):
     MANISKILL = 0
     GRUTOPIA = 1
+    LIBERO = 2
     
 def action_to_str(action, num_floats: int = 4):
     return [np.round(a, num_floats) for a in action.values()] if isinstance(action, dict) else [np.round(a, num_floats) for a in action]

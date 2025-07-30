@@ -45,9 +45,12 @@ def read_jsonl_standard(file_path: str) -> list:
 data = read_jsonl_standard("deltaQ_backbone/inference_log.jsonl")
 for data_dict in data:
     response = data_dict['response']
+    query = data_dict['question']
     # num tokens of the response
     num_tokens = len(tokenizer.encode(response))
     print(f"Response: {response}, Num Tokens: {num_tokens}")
+    num_tokens = len(tokenizer.encode(query))
+    print(f"Query: {query}, Num Tokens: {num_tokens}")
     break
 tmp_response = "2, 4, 1, 3, 0, -2, 3, 40"
 num_tokens = len(tokenizer.encode(tmp_response))

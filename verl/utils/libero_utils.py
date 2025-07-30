@@ -208,7 +208,7 @@ def invert_gripper_action(action: np.ndarray) -> np.ndarray:
 
     return inverted_action
 
-def save_rollout_video(rollout_images, exp_name, task_name, step_idx, success ):
+def save_rollout_video(rollout_images, exp_name, task_name, step_idx, success):
     """Saves an MP4 replay of an episode."""
     rollout_dir = f"./rollouts/{exp_name}" 
     os.makedirs(rollout_dir, exist_ok=True)

@@ -109,7 +109,6 @@ class GRUTOPIA_Dataset(Dataset):
     def __init__(
         self, 
         train_val="train",
-        num_trials_per_task=50,
     ):
         if train_val == "train":
             env_ids = TRAIN_IDS
@@ -118,13 +117,13 @@ class GRUTOPIA_Dataset(Dataset):
         dataframes = []
 
         for env_id in env_ids:
-            for i in range(num_trials_per_task):
-                data = {
-                    'task_suite_name': 'grutopia',
-                    'task_id': torch.tensor(env_id, dtype=torch.int64).unsqueeze(0),
-                    'trial_id': torch.tensor(i, dtype=torch.int64).unsqueeze(0)
-                }
-                dataframes.append(data)
+            data = {
+                'task_suite_name': 'grutopia',
+                'task_instruction': '',
+                'env_unique_id': torch.tensor(env_id, dtype=torch.int64).unsqueeze(0),
+                "env_id": '',
+            }
+            dataframes.append(data)
         self.dataframe = dataframes
        
     def __getitem__(self, index):
@@ -144,8 +143,9 @@ class MANISKILL_Dataset(Dataset):
             for task_id in task_ids:
                 data = {
                     'task_suite_name': 'maniskill',
-                    'task_description': task_descriptions[task_id],
-                    'task_seed': torch.tensor(env_seed, dtype=torch.int64).unsqueeze(0),
+                    'task_instruction': task_descriptions[task_id],
+                    'env_unique_id': torch.tensor(env_seed, dtype=torch.int64).unsqueeze(0),
+                    'env_id': task_id,
                 }
                 dataframes.append(data)
         self.dataframe = dataframes

@@ -1,12 +1,14 @@
 data:
   tokenizer: null
-  task_suite_name: grutopia
-  num_trials_per_task: 50
+  task_suite_name: maniskill
+  num_envs_seeds: 1024  # number of envs scenes per task
+  task_ids: 
+    - "StackCube-v1"
   filter_warmup: False
   prompt_key: prompt
   system_prompt: null
-  max_prompt_length: 512
-  max_response_length: 512
+  max_prompt_length: 256
+  max_response_length: 16
   train_batch_size: 1024
   val_batch_size: 1312
   return_raw_input_ids: False  # This should be set to true when the tokenizer between policy and rm differs
@@ -25,7 +27,7 @@ actor_rollout_ref:
   hybrid_engine: True
   model:
     vla: internvl_chat
-    action_token_len: 60  # 16
+    action_token_len: 16  # 16
     action_chunks_len: 1
     path: deltaQ_backbone
     external_lib: null
@@ -84,12 +86,12 @@ actor_rollout_ref:
     dual_cam: true
     action_chunks_len: ${actor_rollout_ref.model.action_chunks_len}
     resize_target: [480, 480]
-    experiment_name: None
+    experiment_name: maniskill
     unnorm_key: 
     micro_batch_size: 1
     val_micro_batch_size: 8
     model_family: internvl_chat
-    task_suite_name: grutopia
+    task_suite_name: maniskill
     num_steps_wait: 10
     pretrained_checkpoint: None
     center_crop: True
@@ -217,8 +219,6 @@ reward_model:
       grad_clip: 1.0
     beta_train: 0.05
     loss_type: ce # currently only supports ce loss
-
-
 
 algorithm:
   gamma: 1.0

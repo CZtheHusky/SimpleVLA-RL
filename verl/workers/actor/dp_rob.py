@@ -135,7 +135,7 @@ class RobDataParallelPPOActor(BasePPOActor):
             attention_mask = attention_mask.reshape((batch_size * traj_len,) + attention_mask.shape[2:])
             pixel_values = pixel_values.reshape((batch_size * traj_len,) + pixel_values.shape[2:])
             responses = responses.reshape((batch_size * traj_len,) + responses.shape[2:])
-            
+            breakpoint()
             input_ids_unpad, _ = self.process_tensor(input_ids, self.pad_token_id)
             attention_mask_unpad, _ = self.process_tensor(attention_mask, 0)
             
@@ -190,10 +190,8 @@ class RobDataParallelPPOActor(BasePPOActor):
                 log_probs = log_probs.reshape((batch_size, traj_len*response_length))
                 entropy = entropy.reshape((batch_size, traj_len*response_length))
             elif self.config.vla == "internvl_chat":
-                if self.rank == 0:
-                    breakpoint()
-                
-                output = self.actor_module.verl_forward(
+                pixel_values = pixel_values.reshape(-1, *pixel_values.shape[-3:])  # (batch_size * traj_len, C, H, W)
+                output = self.actor_module(
                     pixel_values=pixel_values,
                     input_ids=input_ids_unpad,
                     attention_mask=attention_mask,
@@ -369,6 +367,7 @@ class RobDataParallelPPOActor(BasePPOActor):
                 return entropy
             
             elif self.config.vla == "internvl_chat":
+                pixel_values = pixel_values.reshape(-1, *pixel_values.shape[-3:])  # (batch_size * traj_len, C, H, W)
                 output = self.actor_module(input_ids=input_ids_unpad,
                                         attention_mask=attention_mask_unpad,
                                         pixel_values=pixel_values,

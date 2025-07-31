@@ -144,8 +144,6 @@ class RobHFRollout(BaseRollout):
         num_chunks = max(batch_size // micro_batch_size, 1)
         # assert batch_size % micro_batch_size == 0, f"Batch size {batch_size} is not divisible by micro batch size {micro_batch_size}."    # avoid changing the num of venvs
         batch_prompts = prompts.chunk(chunks=num_chunks)
-        # if self.rank == 0:
-        #     breakpoint()
         output = [self._generate_minibatch(p) for p in batch_prompts]
         output = DataProto.concat(output)
         print("Batch generation time:", time.time() - start_time)
@@ -325,7 +323,6 @@ class RobHFRollout(BaseRollout):
         
         batch["complete"] = torch.tensor(batch["complete"], dtype=torch.bool, device=batch['responses'].device)
         batch["finish_step"] = torch.tensor(batch["finish_step"], dtype=torch.int64, device=batch['responses'].device)
-        # breakpoint()
         output_batch = TensorDict(
             batch,
             batch_size=batch_size)
@@ -641,7 +638,7 @@ class RobHFRollout(BaseRollout):
             num_patches_list = prompts['num_patches_list']
             
             img_context_token_id = tokenizer.convert_tokens_to_ids('<IMG_CONTEXT>',)
-            self.module.set_img_context_token_id(img_context_token_id)
+            # self.module.set_img_context_token_id(img_context_token_id)
             # if verbose and pixel_values is not None:
             #     image_bs = pixel_values.shape[0]
             #     print(f'dynamic ViT batch size: {image_bs}')
@@ -651,8 +648,6 @@ class RobHFRollout(BaseRollout):
             temperature = prompts.get('temperature', self.config.temperature)
             queries = []
             # questions_str = ''
-            # if step == 1:
-            #     breakpoint()
             for idx, num_patches in enumerate(num_patches_list):
                 question = questions[idx]
                 # questions_str += f"idx: {idx}, Q: {question}\n"

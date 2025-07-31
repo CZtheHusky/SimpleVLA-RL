@@ -133,9 +133,9 @@ class GRUTOPIA_Dataset(Dataset):
         return len(self.dataframe)
     
 class MANISKILL_Dataset(Dataset):
-    def __init__(self, train_val="train", num_envs_seeds=1024, task_ids: List[str] = ["StackCube-v1"]):
+    def __init__(self, train_val="train", num_envs_seeds=16, task_ids: List[str] = ["StackCube-v1"]):
         dataframes = []
-        env_seeds = np.arange(num_envs_seeds) if train_val == "train" else np.arange(1024, 2048)
+        env_seeds = np.arange(num_envs_seeds) if train_val == "train" else np.arange(num_envs_seeds, num_envs_seeds + max(1, (num_envs_seeds // 20)))
         task_descriptions = {
             "StackCube-v1": "stack the red cube on top of the green one",
         }

@@ -12,12 +12,15 @@ class EnvActor:
         self.env_unique_ids = []
     
     def init_venv(self, env_ids, env_unique_ids, task_instructions, is_valid, global_steps, max_steps):
+        assert len(env_ids) > 1, "Num venvs must be greater than 1 to avoid env re-initialization PHYSIX Errors."
         self.finished = np.zeros(len(env_unique_ids), dtype=bool)
         self.finish_step = np.zeros(len(env_unique_ids), dtype=int)
-        task_file_names = [f"{env_ids[venv_index]}_task_{env_unique_ids[venv_index]}_uid_{global_steps}" for venv_index in range(len(env_unique_ids))]
+        # task_file_names = [f"{env_ids[venv_index]}_task_{env_unique_ids[venv_index]}_uid_{global_steps}" for venv_index in range(len(env_unique_ids))]
+        task_file_names = {venv_index: f"{env_ids[venv_index]}_task_{env_unique_ids[venv_index]}_uid_{global_steps}" for venv_index in range(len(env_unique_ids))}
         try:
             if self.env is not None and (self.env_ids[0] != env_ids[0] or len(self.env_unique_ids) != len(env_unique_ids)):
                 # reinit the env with new env_ids and env_unique_ids
+                print("Closing existing environment and creating a new one...")
                 self.env.close()
                 self.env = None
             if self.env is None:
@@ -40,6 +43,7 @@ class EnvActor:
             return {'error': f"{type(e).__name__}: {e}\n{traceback.format_exc()}"}
         self.env_ids = env_ids
         self.env_unique_ids = env_unique_ids        
+        self.is_valid = is_valid
 
         return {
             'obs': obs,
@@ -52,6 +56,8 @@ class EnvActor:
 
     def step(self, action):
         try:
+            if isinstance(action, list):
+                action = np.array(action)
             obs, _, terminated, _, _ = self.env.step(action)
             terminated = terminated.cpu().numpy()
             self.finished = np.logical_or(self.finished, terminated)

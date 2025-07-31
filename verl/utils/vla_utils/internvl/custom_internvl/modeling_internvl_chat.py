@@ -40,7 +40,7 @@ class InternVLChatModel(PreTrainedModel):
 
     def __init__(self, config: InternVLChatConfig, vision_model=None, language_model=None, use_flash_attn=False):
         super().__init__(config)
-
+        print(">>> Using my LOCAL modeling_internvl_chat.py")
         assert version_cmp(transformers.__version__, '4.36.2', 'ge')
         image_size = config.force_image_size or config.vision_config.image_size
         patch_size = config.vision_config.patch_size
@@ -372,14 +372,21 @@ class InternVLChatModel(PreTrainedModel):
             else:
                 vit_embeds = self.extract_feature(pixel_values)
             input_embeds = self.language_model.get_input_embeddings()(input_ids)
-            input_embeds.to(pixel_values.dtype)
             B, N, C = input_embeds.shape
             input_embeds = input_embeds.reshape(B * N, C)
 
             input_ids = input_ids.reshape(B * N)
             selected = (input_ids == self.img_context_token_id if self.img_context_token_id is not None else img_context_token_id)
             assert selected.sum() != 0
-            input_embeds[selected] = vit_embeds.reshape(-1, C).to(input_embeds.device)
+            vit_embeds = vit_embeds.reshape(-1, C)
+
+            # 明确转换 dtype
+            if vit_embeds.dtype != input_embeds.dtype:
+                vit_embeds = vit_embeds.to(dtype=input_embeds.dtype)
+
+            # 安全赋值
+            input_embeds[selected] = vit_embeds.to(device=input_embeds.device)
+            # input_embeds[selected] = vit_embeds.reshape(-1, C).to(input_embeds.device)
 
             input_embeds = input_embeds.reshape(B, N, C)
         else:

@@ -109,12 +109,12 @@ def main(config):
         if os.path.isfile(str(config.trainer.runtime_env)):
             with open(str(config.trainer.runtime_env), 'r') as f:
                 runtime_env = json.load(f)
-            # runtime_env['env_vars'].update({"RAY_DEBUG": "1"})
+            runtime_env['env_vars'].update({"RAY_DEBUG": "1"})
             print(runtime_env)
             ray.init(runtime_env=runtime_env, _temp_dir=ray_tmp_dir)
         else:
             runtime_env = {'env_vars': {'TOKENIZERS_PARALLELISM': 'true', 'NCCL_DEBUG': 'WARN'}}
-            # runtime_env['env_vars'].update({"RAY_DEBUG": "1"})
+            runtime_env['env_vars'].update({"RAY_DEBUG": "1"})
             print(runtime_env)
             ray.init(runtime_env=runtime_env, _temp_dir=ray_tmp_dir)
 
@@ -137,7 +137,7 @@ def main_task(config):
 
     # instantiate tokenizer
     from verl.utils import hf_tokenizer
-    tokenizer = hf_tokenizer(local_path)
+    tokenizer = hf_tokenizer(local_path, trust_remote_code=config.actor_rollout_ref.model.get('trust_remote_code', False))
 
     # define worker classes
     if config.actor_rollout_ref.actor.strategy == 'fsdp':

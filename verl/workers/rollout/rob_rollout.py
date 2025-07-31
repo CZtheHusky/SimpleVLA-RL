@@ -39,6 +39,7 @@ from verl import DataProto
 from libero.libero import benchmark
 from codetiming import Timer
 from collections import deque
+from copy import deepcopy
 import random
 import time
 import multiprocessing
@@ -50,6 +51,7 @@ from enum import Enum
 from verl.utils.env_utils.utils import obs_process, extract_action_vector, assemble_action_vla, action_decode, TaskSuite
 from verl.workers.rollout.env_workers.libero_env_worker import center_crop_image
 import ray
+import os
 
 __all__ = ['RobHFRollout']
 
@@ -69,6 +71,7 @@ class RobHFRollout(BaseRollout):
         super().__init__()
         self.config = config
         self.module = module
+        self.rank = int(os.environ.get("RANK", 0))
         self.processor = AutoProcessor.from_pretrained(config.pretrained_checkpoint, trust_remote_code=True)
         if config.vla == "internvl_chat":
             self.response_length = 16 if config.response_length is None else config.response_length
@@ -86,7 +89,7 @@ class RobHFRollout(BaseRollout):
                 self.process_kwargs['dual_cam'] = False
             self.env_type = ENV_TYPE.VENV
             self.max_steps = {
-                "StackCube-v1": 200,
+                "StackCube-v1": 10,
             }
             from verl.workers.rollout.env_workers.maniskill_env_worker import env_worker, EnvActor
             self.env_actor = EnvActor()
@@ -132,13 +135,17 @@ class RobHFRollout(BaseRollout):
         start_time = time.time()
         batch_size = prompts.batch.batch_size[0]
         
-        if prompts.meta_info.get('n_samples') is None:
+        if prompts.meta_info.get('n_samples') is None:  # validatino rollout
             micro_batch_size = self.config.val_micro_batch_size if self.config.val_micro_batch_size is not None else 1
         else:
-            micro_batch_size = self.config.get('micro_batch_size', batch_size)
-        
+            micro_batch_size = self.config.get('micro_batch_size', batch_size)  # batch size for training
+        if self.task_suite == TaskSuite.MANISKILL and prompts.meta_info.get('n_samples') is None:
+            assert micro_batch_size > 1 and batch_size > 1, "Batch size (num venvs) must be greater than 1 to avoid env re-initialization PHYSIX Errors."
         num_chunks = max(batch_size // micro_batch_size, 1)
+        # assert batch_size % micro_batch_size == 0, f"Batch size {batch_size} is not divisible by micro batch size {micro_batch_size}."    # avoid changing the num of venvs
         batch_prompts = prompts.chunk(chunks=num_chunks)
+        # if self.rank == 0:
+        #     breakpoint()
         output = [self._generate_minibatch(p) for p in batch_prompts]
         output = DataProto.concat(output)
         print("Batch generation time:", time.time() - start_time)
@@ -226,11 +233,10 @@ class RobHFRollout(BaseRollout):
         env_id = np.repeat(prompts.non_tensor_batch['env_id'], n_samples)
         is_valid = meta_info.get('n_samples') is None
         global_steps = meta_info.get('global_steps', 0) if is_valid else 0
-        infos_print = f"-------------------------------------------------\nenv_unique_id: {prompts.batch['env_unique_id']}\nshape: {prompts.batch['env_unique_id'].shape}\ntask_instruction: {prompts.non_tensor_batch['task_instruction']}\ntask_suite_name: {task_suite_name}\nenv_id: {prompts.non_tensor_batch['env_id']}\nglobal_steps: {global_steps}\nEnv_id: {env_id[0]}\nNum of envs: {len(env_unique_id.cpu().numpy().squeeze(1))}is_valid: {is_valid}"
-        print(infos_print)
+        # infos_print = f"-------------------------------------------------\nenv_unique_id: {prompts.batch['env_unique_id']}\nshape: {prompts.batch['env_unique_id'].shape}\ntask_instruction: {prompts.non_tensor_batch['task_instruction']}\ntask_suite_name: {task_suite_name}\nenv_id: {prompts.non_tensor_batch['env_id']}\nglobal_steps: {global_steps}\nEnv_id: {env_id[0]}\nNum of envs: {len(env_unique_id.cpu().numpy().squeeze(1))}\nis_valid: {is_valid}\n-------------------------------------------------"
+        # print(infos_print)
         max_steps = self.max_steps[env_id[0]]
         batch_size = env_unique_id.size(0)    # Num of grpo samples
-        print("start init")
         init_data = self.env_actor.init_venv(
             env_id,
             env_unique_id.cpu().numpy().squeeze(1),
@@ -239,10 +245,8 @@ class RobHFRollout(BaseRollout):
             global_steps,
             max_steps
         )
-        print('init done')
         task_records = []
         valid_video = defaultdict(list)
-        # print(init_data)
         task_instructions = init_data["task_instructions"]
         inputs = init_data['obs']
         task_records = {
@@ -251,18 +255,18 @@ class RobHFRollout(BaseRollout):
             "task_file_name": init_data['task_file_name']
         }
         if is_valid:
-            for venv_index, taskfn in enumerate(init_data['task_file_name']):
-                valid_video[taskfn].append(init_data['valid_images'][venv_index])
+            for venv_index in init_data['task_file_name'].keys():
+                valid_video[venv_index].append(init_data['valid_images'][int(venv_index)])
         vla_history = []
         step = 0
         is_already_done = np.zeros(len(env_unique_id), dtype=bool)
         while step < max_steps:
             current_inputs = inputs
             current_task_instructions = task_instructions
-            print("processing input")
+            # print(f"step: {step} processing input")
             vla_input = self.process_input(current_inputs, current_task_instructions)
             vla_input.update(meta_info)
-            vla_output = self._generate_one_step(vla_input)
+            vla_output = self._generate_one_step(vla_input, step)
             actions = vla_output["action"]
             
             step_data = {
@@ -284,15 +288,14 @@ class RobHFRollout(BaseRollout):
                     task_records['complete'][venv_index] = is_complete[venv_index]
                     task_records['finish_step'][venv_index] = finish_step[venv_index]
                     if is_valid:
-                        task_file_name = task_records['task_file_name'][venv_index]
-                        valid_video[task_file_name].append(output['valid_images'][venv_index])
-            assert output['type'] == 'step'
+                        valid_video[venv_index].append(output['valid_images'][venv_index])
             inputs = output['obs']
             step += self.config.action_chunks_len
         torch.cuda.empty_cache()
         if is_valid:
-            for task_file, images in valid_video.items():
-                complete = any(r['complete'] for r in task_records if r['task_file_name'] == task_file)
+            for venv_idx, images in valid_video.items():
+                complete = task_records['complete'][venv_idx]
+                task_file = task_records['task_file_name'][venv_idx]
                 save_rollout_video(
                     images,
                     self.config.experiment_name,
@@ -318,10 +321,11 @@ class RobHFRollout(BaseRollout):
         
         for k in task_records.keys():
             batch[k] = task_records[k]
+        del batch['task_file_name']
         
         batch["complete"] = torch.tensor(batch["complete"], dtype=torch.bool, device=batch['responses'].device)
         batch["finish_step"] = torch.tensor(batch["finish_step"], dtype=torch.int64, device=batch['responses'].device)
-        
+        # breakpoint()
         output_batch = TensorDict(
             batch,
             batch_size=batch_size)
@@ -468,7 +472,7 @@ class RobHFRollout(BaseRollout):
         return DataProto(batch=output_batch)
     
     @torch.no_grad()
-    def _generate_one_step(self, prompts: dict):
+    def _generate_one_step(self, prompts: dict, step=None):
         if self.config.vla == "openvla-oft":
             idx = prompts['input_ids']  # (bs, prompt_length)
             attention_mask = prompts['attention_mask']  # left-padded attention_mask
@@ -641,26 +645,30 @@ class RobHFRollout(BaseRollout):
             # if verbose and pixel_values is not None:
             #     image_bs = pixel_values.shape[0]
             #     print(f'dynamic ViT batch size: {image_bs}')
-            do_sample = prompts.get('do_sample', self.config.do_sample)
+            do_sample = self.config.do_sample
             top_p = prompts.get('top_p', self.config.get('top_p', 1.0))
             top_k = prompts.get('top_k', self.config.get('top_k', 0))
             temperature = prompts.get('temperature', self.config.temperature)
             queries = []
+            # questions_str = ''
+            # if step == 1:
+            #     breakpoint()
             for idx, num_patches in enumerate(num_patches_list):
                 question = questions[idx]
+                # questions_str += f"idx: {idx}, Q: {question}\n"
                 if pixel_values is not None and '<image>' not in question:
                     question = '<image>\n' + question
                 # template = get_conv_template(self.module.template)
-                template = self.module.conv_template
+                template = deepcopy(self.module.conv_template)
                 template.system_message = self.module.system_message
                 template.append_message(template.roles[0], question)
                 template.append_message(template.roles[1], None)
                 query = template.get_prompt()
+                # questions_str += f"idx: {idx}, query: {query}\n"
                 for patches in num_patches:
                     image_tokens = '<img>' + '<IMG_CONTEXT>' * self.module.num_image_token * patches + '</img>'
                     query = query.replace('<image>', image_tokens, 1)
                 queries.append(query)
-
             tokenizer.padding_side = 'left'
             model_inputs = tokenizer(queries, return_tensors='pt', padding=True)
             input_ids = model_inputs['input_ids'].to(self.module.device)
@@ -669,7 +677,8 @@ class RobHFRollout(BaseRollout):
             if isinstance(self.module, FSDP):
                 # recurse need to set to False according to https://github.com/pytorch/pytorch/issues/100069
                 param_ctx = FSDP.summon_full_params(self.module, writeback=False, recurse=False)
-            print("start inference")
+            # questions_str += f"start inference\nlen inputs: {input_ids.shape}\npixel_values: {pixel_values.shape}"
+            # print(questions_str)
             with param_ctx:
                 with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
                     pixel_values = pixel_values.to('cuda').to(torch.bfloat16)
@@ -684,12 +693,13 @@ class RobHFRollout(BaseRollout):
                         top_p=top_p,
                         top_k=top_k,
                     )
-            print("inference done")
+            # response_str = f"step: {step} inference done\n"
             full_seq = torch.concatenate((input_ids, generation_output), dim=-1)
             responses = tokenizer.batch_decode(generation_output, skip_special_tokens=True)
             string_response = [response.split(template.sep.strip())[0].strip() for response in responses]
-            for response in string_response:
-                print(response)
+            # for idx, response in enumerate(string_response):
+            #     response_str += f"idx: {idx}, R: {response}\n"
+            # print(response_str)
             actions = action_decode(prompts, string_response, self.task_suite)
             response_attention_mask = get_eos_mask(response_id=generation_output, eos_token=eos_token_id, dtype=attention_mask.dtype)
             attention_mask = torch.cat((attention_mask, response_attention_mask), dim=-1)

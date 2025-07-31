@@ -154,15 +154,15 @@ class RobActorRolloutRefWorker(Worker):
                 check_model_logic_mismatch(local_path)
             torch.distributed.barrier()
         elif self.config.model.vla == "internvl_chat":
-            from verl.utils.vla_utils.internvl.configuration_internvl_chat import InternVLChatConfig
-            from verl.utils.vla_utils.internvl.modeling_internvl_chat import InternVLChatModel
-            AutoConfig.register('internvl_chat', InternVLChatConfig)
-            AutoModelForCausalLM.register(InternVLChatConfig, InternVLChatModel)
+            # AutoConfig.register('internvl_chat', InternVLChatConfig)
+            # AutoModelForCausalLM.register(InternVLChatConfig, InternVLChatModel)
             # from verl.utils.internvl_utils import update_auto_map , check_model_logic_mismatch
             # if self.rank == 0:
             #     update_auto_map(local_path)
             #     check_model_logic_mismatch(local_path)
             # torch.distributed.barrier()
+            from verl.utils.internvl_utils import replace_modeling_files
+            replace_modeling_files(local_path)
         
         #add end
 

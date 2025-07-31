@@ -47,14 +47,16 @@ class RMDataset(Dataset):
                  rejected_key='rejected',
                  max_length=1024,
                  add_eos=True,
-                 cache_dir='~/.cache/verl/rm'):
+                 cache_dir='~/.cache/verl/rm',
+                 **tokenizer_kwargs,
+                ):
         if not isinstance(parquet_files, List):
             parquet_files = [parquet_files]
 
         self.parquet_files = parquet_files
         self.cache_dir = os.path.expanduser(cache_dir)
         if isinstance(tokenizer, str):
-            tokenizer = hf_tokenizer(tokenizer)
+            tokenizer = hf_tokenizer(tokenizer, **tokenizer_kwargs)
         self.tokenizer = tokenizer
 
         self.prompt_key = prompt_key

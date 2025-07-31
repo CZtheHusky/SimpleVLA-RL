@@ -44,7 +44,9 @@ class SFTDataset(Dataset):
                  response_key='response',
                  response_dict_keys=None,
                  max_length=1024,
-                 truncation='error'):
+                 truncation='error',
+                 **tokenizer_kwargs,
+                ):
         assert truncation in ['error', 'left', 'right']
         self.truncation = truncation
 
@@ -53,7 +55,7 @@ class SFTDataset(Dataset):
 
         self.parquet_files = parquet_files
         if isinstance(tokenizer, str):
-            tokenizer = hf_tokenizer(tokenizer)
+            tokenizer = hf_tokenizer(tokenizer, **tokenizer_kwargs)
         self.tokenizer: PreTrainedTokenizer = tokenizer
 
         self.prompt_key = prompt_key if isinstance(prompt_key, (tuple, list)) else [prompt_key]

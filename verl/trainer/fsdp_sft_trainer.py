@@ -63,7 +63,7 @@ class FSDPSFTTrainer(object):
         # build tokenizer first
         local_model_path = copy_local_path_from_hdfs(src=self.config.model.partial_pretrain, verbose=True)
         from verl.utils import hf_tokenizer
-        self.tokenizer = hf_tokenizer(local_model_path, trust_remote_code=self.config.model.trust_remote_code)
+        self.tokenizer = hf_tokenizer(local_model_path, trust_remote_code=self.config.model.get('trust_remote_code', False))
         if self.config.data.chat_template is not None:
             raise ValueError('Apply Chat template from config is not supported yet.')
 
@@ -145,7 +145,7 @@ class FSDPSFTTrainer(object):
 
         log_gpu_memory_usage('Before model allocation', logger=logger)
 
-        trust_remote_code = self.config.model.trust_remote_code
+        trust_remote_code = self.config.model.get('trust_remote_code', False)
         # load config first
         config = AutoConfig.from_pretrained(local_model_path, trust_remote_code=trust_remote_code)
 

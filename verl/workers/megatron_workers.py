@@ -126,7 +126,9 @@ class ActorRolloutRefWorker(MegatronWorker):
                                megatron_config: ModelParallelConfig,
                                optim_config,
                                override_model_config,
-                               enable_gradient_checkpointing=False):
+                               enable_gradient_checkpointing=False,
+                               trust_remote_code=False,
+                               ):
         from verl.utils.megatron.optimizer import get_megatron_optimizer
         from megatron.core.models.gpt.gpt_model import ModelType
         from verl.utils.model import print_model_size, update_model_config
@@ -135,7 +137,7 @@ class ActorRolloutRefWorker(MegatronWorker):
 
         # Step 1: initialize the tokenizer
         local_path = copy_local_path_from_hdfs(model_path)
-        self.tokenizer = hf_tokenizer(local_path)
+        self.tokenizer = hf_tokenizer(local_path, trust_remote_code=trust_remote_code)
 
         # Step 2: get the actor_model_config
         actor_model_config = AutoConfig.from_pretrained(local_path)
@@ -293,6 +295,7 @@ class ActorRolloutRefWorker(MegatronWorker):
                 megatron_config=megatron_config,
                 optim_config=optim_config,
                 override_model_config=override_model_config,
+                trust_remote_code=self.config.model.get('trust_remote_code', False),
             )
 
         if self._is_actor:
@@ -312,6 +315,7 @@ class ActorRolloutRefWorker(MegatronWorker):
                 megatron_config=megatron_config,
                 optim_config=None,
                 override_model_config=override_model_config,
+                trust_remote_code=self.config.model.get('trust_remote_code', False),
             )
             self.ref_policy = MegatronPPOActor(config=self.config.ref,
                                                model_config=self.ref_model_config,

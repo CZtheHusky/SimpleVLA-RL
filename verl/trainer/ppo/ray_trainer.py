@@ -301,6 +301,8 @@ class RayTrainer(object):
             self.val_dataset = LIBERO_Dataset(self.config.data.task_suite_name,
                                             num_trials_per_task=self.config.data.num_trials_per_task,
                                             train_val ="valid")
+            self.batch_keys = ['task_id', 'trial_id']
+            self.non_tensor_batch_keys = {"task_suite_name"}
         elif self.config.data.task_suite_name == "grutopia":
             from verl.utils.dataset.rob_dataset import GRUTOPIA_Dataset
             self.train_dataset = GRUTOPIA_Dataset('train')
@@ -309,8 +311,12 @@ class RayTrainer(object):
             from verl.utils.dataset.rob_dataset import MANISKILL_Dataset
             self.train_dataset = MANISKILL_Dataset('train', num_envs_seeds=self.config.data.num_envs_seeds, task_ids= self.config.data.task_ids)
             self.val_dataset = MANISKILL_Dataset('valid', num_envs_seeds=self.config.data.num_envs_seeds, task_ids= self.config.data.task_ids)
+            self.batch_keys = ['env_unique_id']
+            self.non_tensor_batch_keys = {"task_suite_name", "env_id", "task_instruction"}
         else:
             raise NotImplementedError(f'Unsupported task suite: {self.config.data.task_suite_name}')
+        print(f"Size of train dataset: {len(self.train_dataset)}")
+        print(f"Size of val dataset: {len(self.val_dataset)}")
         self.train_dataloader = BufferedDataLoader(DataLoader(dataset=self.train_dataset,
                                            batch_size=int(self.config.data.train_batch_size*self.config.data.oversample_factor),
                                            shuffle=True,
@@ -341,7 +347,6 @@ class RayTrainer(object):
         metric_dict = {}
         for test_data in self.val_dataloader:
             test_batch = DataProto.from_single_dict(test_data)
-           
             test_batch.meta_info = {
                 'eos_token_id': self.tokenizer.eos_token_id,
                 'pad_token_id': self.tokenizer.pad_token_id,
@@ -350,7 +355,8 @@ class RayTrainer(object):
                 'validate': True,
                 "global_steps":global_steps
             }
-
+            for key in self.batch_keys:
+                print(test_batch.batch[key])
             test_output_gen_batch = self.actor_rollout_wg.generate_sequences(test_batch)
             print('validation generation end')
 
@@ -526,8 +532,8 @@ class RayTrainer(object):
                             newbatch = DataProto.concat([buffer_batch, newbatch])
                             buffer_batch = []
 
-                        gen_batch = newbatch.select(batch_keys=['task_id', 'trial_id'],
-                                                    non_tensor_batch_keys={"task_suite_name"},
+                        gen_batch = newbatch.select(batch_keys=self.batch_keys,
+                                                    non_tensor_batch_keys=self.non_tensor_batch_keys,
                                                     meta_info_keys={})
  
                         newbatch.non_tensor_batch['uid'] = np.array([str(uuid.uuid4()) for _ in range(len(newbatch.batch))],

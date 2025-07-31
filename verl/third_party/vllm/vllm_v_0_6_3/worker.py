@@ -93,7 +93,7 @@ class Worker(Worker):
         # if parallel_config and is_driver_worker:
         #     assert rank % parallel_config.tensor_parallel_size == 0, \
         #            "Driver worker should be rank 0 of tensor parallel group."
-        if self.model_config.trust_remote_code:
+        if self.model_config.get("trust_remote_code", False):
             # note: lazy import to avoid importing torch before initializing
             from vllm.utils import init_cached_hf_modules
 

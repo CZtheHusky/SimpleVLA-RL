@@ -139,7 +139,7 @@ class RobHFRollout(BaseRollout):
             micro_batch_size = self.config.val_micro_batch_size if self.config.val_micro_batch_size is not None else 1
         else:
             micro_batch_size = self.config.get('micro_batch_size', batch_size)  # batch size for training
-        if self.task_suite == TaskSuite.MANISKILL and prompts.meta_info.get('n_samples') is None:
+        if self.task_suite == TaskSuite.MANISKILL:
             assert micro_batch_size > 1 and batch_size > 1, "Batch size (num venvs) must be greater than 1 to avoid env re-initialization PHYSIX Errors."
         num_chunks = max(batch_size // micro_batch_size, 1)
         # assert batch_size % micro_batch_size == 0, f"Batch size {batch_size} is not divisible by micro batch size {micro_batch_size}."    # avoid changing the num of venvs

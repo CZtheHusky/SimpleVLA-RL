@@ -10,7 +10,7 @@ export PYTHONPATH="/home/caozhe/workspace/SimpleVLA-RL:$PYTHONPATH"
 PROJECT_NAME='SimpleVLA-RL'
 EXPERIMENT_NAME='maniskill' 
 # For openvla-oft Libero-Long traj1 SFT or traj all SFT models can be find in https://huggingface.co/collections/Haozhan72/simplevla-rl-6833311430cd9df52aeb1f86
-SFT_MODEL_PATH="/home/caozhe/workspace/SimpleVLA-RL/vlav-project/maniskill_stack_cubes_dual/internvl2-2b/v0-20250729-171130/checkpoint-1280"
+SFT_MODEL_PATH="/home/caozhe/workspace/SimpleVLA-RL/vlav-project/maniskill_stack_cubes_dual/internvl2-2b/v0-20250729-171130/checkpoint-640"
 CKPT_PATH="/home/caozhe/workspace/SimpleVLA-RL/ckpts_mani"
 # DATASET_NAME can be libero_10 (libero_Long), libero_90, libero_spatial, libero_object, libero_goal
 DATASET_NAME="maniskill"
@@ -30,7 +30,7 @@ HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=0,1,2,3 python -m verl.trainer.main_ppo 
     data.train_batch_size=8 \
     data.val_batch_size=8 \
     data.num_envs_seeds=160  \
-    data.max_prompt_length=1024 \
+    data.max_prompt_length=700 \
     data.max_response_length=16 \
     actor_rollout_ref.model.path=$SFT_MODEL_PATH \
     actor_rollout_ref.model.vla=$VLA_NAME \
@@ -63,7 +63,7 @@ HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=0,1,2,3 python -m verl.trainer.main_ppo 
     actor_rollout_ref.rollout.num_steps_wait=10 \
     actor_rollout_ref.rollout.pretrained_checkpoint=$SFT_MODEL_PATH \
     actor_rollout_ref.rollout.center_crop=True \
-    actor_rollout_ref.rollout.max_prompt_length=1024 \
+    actor_rollout_ref.rollout.max_prompt_length=700 \
     actor_rollout_ref.rollout.log_prob_micro_batch_size=4 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.name=hf \

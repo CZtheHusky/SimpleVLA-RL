@@ -31,6 +31,8 @@ from verl.utils.seqlen_balancing import rearrange_micro_batches, get_reverse_idx
 import verl.utils.torch_functional as verl_F
 from codetiming import Timer
 from flash_attn.bert_padding import pad_input, unpad_input, rearrange, index_first_axis
+import os
+
 
 __all__ = ['RobDataParallelPPOActor']
 
@@ -54,6 +56,7 @@ class RobDataParallelPPOActor(BasePPOActor):
         self.ulysses_sequence_parallel_size = self.config.ulysses_sequence_parallel_size
         self.use_ulysses_sp = False #self.ulysses_sequence_parallel_size > 1
         self.compute_entropy_from_logits = torch.compile(verl_F.entropy_from_logits, dynamic=True)
+        self.rank = int(os.environ.get('rank', '0'))
        
     def process_tensor(self, tensor, pad_id):
         mask = tensor != pad_id
@@ -187,7 +190,10 @@ class RobDataParallelPPOActor(BasePPOActor):
                 log_probs = log_probs.reshape((batch_size, traj_len*response_length))
                 entropy = entropy.reshape((batch_size, traj_len*response_length))
             elif self.config.vla == "internvl_chat":
-                output = self.actor_module(
+                if self.rank == 0:
+                    breakpoint()
+                
+                output = self.actor_module.verl_forward(
                     pixel_values=pixel_values,
                     input_ids=input_ids_unpad,
                     attention_mask=attention_mask,
@@ -272,6 +278,7 @@ class RobDataParallelPPOActor(BasePPOActor):
                 response_length = responses.size(-1)
                 input_ids_unpad, _ = self.process_tensor(input_ids, self.pad_token_id)
                 attention_mask_unpad, _ = self.process_tensor(attention_mask, 0)
+                pixel_values = pixel_values.reshape(-1, *pixel_values.shape[-3:])
                 output = self.actor_module(input_ids=input_ids_unpad,
                                         attention_mask=attention_mask_unpad,
                                         pixel_values=pixel_values,

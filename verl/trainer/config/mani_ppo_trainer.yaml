@@ -78,7 +78,7 @@ actor_rollout_ref:
         # transformer_layer_cls_to_wrap: None
         min_num_params: 0
       fsdp_size: -1
-    log_prob_micro_batch_size: 128
+    log_prob_micro_batch_size: 128  # micro batch_size for computing ref log_prob, shape is BS * TRAJ_LEN
     log_prob_use_dynamic_bsz: ${actor_rollout_ref.actor.use_dynamic_bsz}
     log_prob_max_token_len_per_gpu: ${actor_rollout_ref.actor.ppo_max_token_len_per_gpu}
     ulysses_sequence_parallel_size: ${actor_rollout_ref.actor.ulysses_sequence_parallel_size} # sp size
@@ -114,7 +114,7 @@ actor_rollout_ref:
     tensor_model_parallel_size: 2
     max_num_batched_tokens: 8192
     max_num_seqs: 1024
-    log_prob_micro_batch_size: 128
+    log_prob_micro_batch_size: 128  # micro batch_size for computing old log_prob, shape is BS * TRAJ_LEN
     log_prob_use_dynamic_bsz: ${actor_rollout_ref.actor.use_dynamic_bsz}
     log_prob_max_token_len_per_gpu: ${actor_rollout_ref.actor.ppo_max_token_len_per_gpu}
     # for hf rollout

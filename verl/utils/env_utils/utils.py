@@ -11,7 +11,6 @@ from scipy.spatial.transform import Rotation as R
 import re
 import cv2
 from typing import List
-import roboticstoolbox as rtb
 from enum import Enum
 import string
 import matplotlib.pyplot as plt
@@ -310,7 +309,7 @@ def obs_process(inputs: List, task_descriptions, task_suite: TaskSuite, **kwargs
                 }
     elif task_suite == TaskSuite.MANISKILL:
         dual_cam = kwargs.get('dual_cam', True)
-        instructions = kwargs.get("instructions", None)
+        instructions = task_descriptions
         num_patches_list = []
         pixel_values = []
         questions = []
@@ -447,15 +446,6 @@ def generate_action_str(
 
     return action_str, action_vector
 
-
-def joint_position_to_end_effector_pose(joint_position, panda=None):
-    if panda is None:
-        panda = rtb.models.Panda()
-    hand_pose = panda.fkine(q=joint_position, end="panda_hand").A
-    position = hand_pose[:3, 3]
-    rotation = hand_pose[:3, :3]
-    orientation = R.from_matrix(rotation).as_quat()[[3, 0, 1, 2]]
-    return position, orientation
 
 def img_decode(img_bytes):
     img_array = np.frombuffer(img_bytes, dtype=np.uint8)

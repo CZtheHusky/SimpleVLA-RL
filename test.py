@@ -1,6 +1,20 @@
 from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig, AutoImageProcessor, AutoModelForVision2Seq, AutoProcessor, AutoModelForCausalLM
 import torch
 
+import mani_skill.envs
+import gymnasium as gym
+from mani_skill.vector.wrappers.gymnasium import ManiSkillVectorEnv
+N = 9
+env = gym.make("PickCube-v1", num_envs=N, reconfiguration_freq=None)
+env = ManiSkillVectorEnv(env, num_envs=N, ignore_terminations=False, auto_reset=True, record_metrics=True)
+env.action_space # shape (N, D)
+env.single_action_space # shape (D, )
+env.observation_space # shape (N, ...)
+env.single_observation_space # shape (...)
+obs, _ = env.reset()
+obs, rew, terminated, truncated, info = env.step(env.action_space.sample())
+# obs (N, ...), rew (N, ), terminated (N, ), truncated (N, )
+
 
 
 local_path = "deltaQ_backbone"

@@ -32,7 +32,7 @@ def set_pad_token_id(tokenizer):
         warnings.warn(f'tokenizer.pad_token is None. Now set to {tokenizer.eos_token}')
 
 
-def hf_tokenizer(name_or_path, correct_pad_token=True, correct_gemma2=True, **kwargs):
+def hf_tokenizer(name_or_path, correct_pad_token=True, correct_gemma2=True, trust_remote_code=True, **kwargs):
     """Create a huggingface pretrained tokenizer.
 
     Args:
@@ -61,7 +61,7 @@ def hf_tokenizer(name_or_path, correct_pad_token=True, correct_gemma2=True, **kw
         print("*********USE VLA tokenizer*************")
         AutoConfig.register("openvla", OpenVLAConfig)
         AutoProcessor.register(OpenVLAConfig, PrismaticProcessor)
-        processor = AutoProcessor.from_pretrained(name_or_path, trust_remote_code=True)
+        processor = AutoProcessor.from_pretrained(name_or_path, trust_remote_code=trust_remote_code)
         tokenizer=processor.tokenizer
     elif model == "openvla":
         from verl.utils.vla_utils.openvla.configuration_prismatic import OpenVLAConfig
@@ -69,15 +69,15 @@ def hf_tokenizer(name_or_path, correct_pad_token=True, correct_gemma2=True, **kw
         print("*********USE VLA tokenizer*************")
         AutoConfig.register("openvla", OpenVLAConfig)
         AutoProcessor.register(OpenVLAConfig, PrismaticProcessor)
-        processor = AutoProcessor.from_pretrained(name_or_path, trust_remote_code=True)
+        processor = AutoProcessor.from_pretrained(name_or_path, trust_remote_code=trust_remote_code)
         tokenizer=processor.tokenizer
     elif model == "internvl_chat":
         # internvl_chat generate action with no token overwritten, use the default tokenizer
-        tokenizer = AutoTokenizer.from_pretrained(name_or_path, **kwargs)
+        tokenizer = AutoTokenizer.from_pretrained(name_or_path, trust_remote_code=trust_remote_code, **kwargs)
         # TODO: check if the pad token is set correctly
         correct_pad_token = False
     else:
-        tokenizer = AutoTokenizer.from_pretrained(name_or_path, **kwargs)
+        tokenizer = AutoTokenizer.from_pretrained(name_or_path, trust_remote_code=trust_remote_code, **kwargs)
         
     if correct_pad_token:
         set_pad_token_id(tokenizer)

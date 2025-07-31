@@ -41,7 +41,6 @@ from verl.utils.py_functional import append_to_dict
 from codetiming import Timer
 
 
-from verl.utils.openvla_utils import update_auto_map , check_model_logic_mismatch
 from peft import LoraConfig, PeftModel, get_peft_model, TaskType
 import json
 
@@ -114,7 +113,7 @@ class RobActorRolloutRefWorker(Worker):
                                optim_config,
                                override_model_config,
                                enable_gradient_checkpointing=False,
-                               trust_remote_code=False):
+                               trust_remote_code=True):
         from verl.utils.model import print_model_size, update_model_config
         from verl.utils.torch_dtypes import PrecisionType
         from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig, AutoImageProcessor, AutoModelForVision2Seq, AutoProcessor, AutoModelForCausalLM
@@ -136,6 +135,7 @@ class RobActorRolloutRefWorker(Worker):
             AutoProcessor.register(OpenVLAConfig, PrismaticProcessor)
             AutoModelForVision2Seq.register(OpenVLAConfig, OpenVLAForActionPrediction)
             if self.rank == 0:
+                from verl.utils.openvla_utils import update_auto_map , check_model_logic_mismatch
                 update_auto_map(local_path)
                 check_model_logic_mismatch(local_path)
             torch.distributed.barrier()
@@ -149,18 +149,20 @@ class RobActorRolloutRefWorker(Worker):
             AutoProcessor.register(OpenVLAConfig, PrismaticProcessor)
             AutoModelForVision2Seq.register(OpenVLAConfig, OpenVLAForActionPrediction)
             if self.rank == 0:
+                from verl.utils.openvla_utils import update_auto_map , check_model_logic_mismatch
                 update_auto_map(local_path)
                 check_model_logic_mismatch(local_path)
             torch.distributed.barrier()
         elif self.config.model.vla == "internvl_chat":
-            # from verl.utils.vla_utils.internvl.configuration_internvl_chat import InternVLChatConfig
-            # from verl.utils.vla_utils.internvl.modeling_internvl_verl import InternVLForActionPrediction
-            # from verl.utils.vla_utils.internvl.processing_internvl import InternVLImageProcessor, InternVLProcessor
-            # AutoConfig.register('internvl_chat', InternVLChatConfig)
-            # AutoImageProcessor.register(InternVLChatConfig, InternVLImageProcessor)
-            # AutoProcessor.register(InternVLChatConfig, InternVLProcessor)
-            # AutoModelForVision2Seq.register(InternVLChatConfig, InternVLForActionPrediction)
-            pass
+            from verl.utils.vla_utils.internvl.configuration_internvl_chat import InternVLChatConfig
+            from verl.utils.vla_utils.internvl.modeling_internvl_chat import InternVLChatModel
+            AutoConfig.register('internvl_chat', InternVLChatConfig)
+            AutoModelForCausalLM.register(InternVLChatConfig, InternVLChatModel)
+            # from verl.utils.internvl_utils import update_auto_map , check_model_logic_mismatch
+            # if self.rank == 0:
+            #     update_auto_map(local_path)
+            #     check_model_logic_mismatch(local_path)
+            # torch.distributed.barrier()
         
         #add end
 
@@ -905,8 +907,7 @@ class ActorRolloutRefWorker(Worker):
                                                                fsdp_config=self.config.ref.fsdp_config,
                                                                optim_config=None,
                                                                override_model_config=override_model_config,
-                                                               trust_remote_code=self.config.model.get(
-                                                                   'trust_remote_code', False))[0]
+                                                               trust_remote_code=self.config.model.get('trust_remote_code', False))[0]
             if self._is_offload_param:
                 offload_fsdp_param_and_grad(module=self.ref_module_fsdp, offload_grad=self._is_offload_grad)
 

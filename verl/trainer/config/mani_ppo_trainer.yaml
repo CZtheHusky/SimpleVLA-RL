@@ -37,6 +37,7 @@ actor_rollout_ref:
     lora_rank: 0  # Set to positive value to enable LoRA (e.g., 32)
     lora_alpha: 32  # LoRA scaling factor
     target_modules: all-linear  
+    trust_remote_code: True  # This is required for internvl_chat model
   actor:
     vla: ${actor_rollout_ref.model.vla}
     action_token_len: ${actor_rollout_ref.model.action_token_len}
@@ -150,6 +151,7 @@ critic:
     lora_alpha: 32  # LoRA scaling factor
     target_modules: all-linear 
     type: value # if set to implicit, this will become an implicit PRM which updates according to gt. this only supports initializing from the reference model currently.
+    trust_remote_code: True  # This is required for internvl_chat model
   ppo_mini_batch_size: ${actor_rollout_ref.actor.ppo_mini_batch_size}
   ppo_micro_batch_size: 64
   forward_micro_batch_size: ${critic.ppo_micro_batch_size}
@@ -182,6 +184,7 @@ reward_model:
     fsdp_config:
       min_num_params: 0
       param_offload: False
+    trust_remote_code: True  # This is required for internvl_chat model
   mini_batch_size: ${actor_rollout_ref.actor.ppo_mini_batch_size}
   micro_batch_size: 64
   max_length: null
@@ -202,6 +205,7 @@ reward_model:
     external_lib: ${actor_rollout_ref.model.external_lib}
     enable_gradient_checkpointing: ${actor_rollout_ref.model.enable_gradient_checkpointing}
     use_remove_padding:  ${actor_rollout_ref.model.use_remove_padding}
+    trust_remote_code: True  # This is required for internvl_chat model
     fsdp_config:
       wrap_policy:
         min_num_params: 0

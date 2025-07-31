@@ -6,36 +6,35 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export TOKENIZERS_PARALLELISM=true
 export CUDA_LAUNCH_BLOCKING=1
 export TORCH_USE_CUDA_DSA=1
-
+export PYTHONPATH="/home/caozhe/workspace/SimpleVLA-RL:$PYTHONPATH"
 PROJECT_NAME='SimpleVLA-RL'
 EXPERIMENT_NAME='maniskill' 
 # For openvla-oft Libero-Long traj1 SFT or traj all SFT models can be find in https://huggingface.co/collections/Haozhan72/simplevla-rl-6833311430cd9df52aeb1f86
-SFT_MODEL_PATH="/home/caozhe/workspace/SimpleVLA-RL/deltaQ_backbone"
-CKPT_PATH="/home/caozhe/workspace/SimpleVLA-RL/ckpts"
+SFT_MODEL_PATH="/home/caozhe/workspace/SimpleVLA-RL/vlav-project/maniskill_stack_cubes_dual/internvl2-2b/v0-20250729-171130/checkpoint-1280"
+CKPT_PATH="/home/caozhe/workspace/SimpleVLA-RL/ckpts_mani"
 # DATASET_NAME can be libero_10 (libero_Long), libero_90, libero_spatial, libero_object, libero_goal
-DATASET_NAME="grutopia"
+DATASET_NAME="maniskill"
 VLA_NAME="internvl_chat"
-NUM_GPUS=8
+NUM_GPUS=4
 # If you want to use 2*8 GPU to RL. Set NUM_NODES=2
 NUM_NODES=1 
 ALIGN_PATH="/home/caozhe/workspace/SimpleVLA-RL/align.json"
 
-HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=1 python -m verl.trainer.main_ppo \
+HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=0,1,2,3 python -m verl.trainer.main_ppo \
     data.task_suite_name=$DATASET_NAME \
-    data.num_trials_per_task=50 \
     data.n_samples=8 \
-    data.filter_accuracy=True \
+    data.filter_accuracy=False \
     data.accuracy_lower_bound=0.1 \
     data.accuracy_upper_bound=0.9 \
     data.oversample_factor=1 \
     data.train_batch_size=32 \
     data.val_batch_size=248 \
     data.max_prompt_length=256 \
-    data.max_response_length=128 \
+    data.max_response_length=16 \
     actor_rollout_ref.model.path=$SFT_MODEL_PATH \
     actor_rollout_ref.model.vla=$VLA_NAME \
-    actor_rollout_ref.model.action_token_len=7 \
-    actor_rollout_ref.model.action_chunks_len=8 \
+    actor_rollout_ref.model.action_token_len=16 \
+    actor_rollout_ref.model.action_chunks_len=1 \
     actor_rollout_ref.actor.optim.lr=5e-6 \
     actor_rollout_ref.actor.optim.warmup_style=constant \
     actor_rollout_ref.actor.ppo_mini_batch_size=128 \
@@ -47,23 +46,23 @@ HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=1 python -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.grad_clip=1 \
     actor_rollout_ref.actor.clip_ratio_high=0.28 \
     actor_rollout_ref.actor.clip_ratio_low=0.2 \
-    actor_rollout_ref.actor.num_images_in_input=1 \
+    actor_rollout_ref.actor.num_images_in_input=2 \
     actor_rollout_ref.actor.traj_mini_batch_size=16 \
     actor_rollout_ref.model.enable_gradient_checkpointing=False \
     actor_rollout_ref.model.use_remove_padding=False \
     actor_rollout_ref.actor.entropy_coeff=0. \
-    actor_rollout_ref.rollout.num_images_in_input=1 \
+    actor_rollout_ref.rollout.num_images_in_input=2 \
     actor_rollout_ref.rollout.val_micro_batch_size=8 \
-    actor_rollout_ref.rollout.temperature=1.6 \
+    actor_rollout_ref.rollout.temperature=1 \
     actor_rollout_ref.rollout.experiment_name=$EXPERIMENT_NAME \
     actor_rollout_ref.rollout.micro_batch_size=1 \
     actor_rollout_ref.rollout.unnorm_key=$DATASET_NAME \
-    actor_rollout_ref.rollout.model_family=openvla \
+    actor_rollout_ref.rollout.model_family=internvl_chat \
     actor_rollout_ref.rollout.task_suite_name=$DATASET_NAME \
     actor_rollout_ref.rollout.num_steps_wait=10 \
     actor_rollout_ref.rollout.pretrained_checkpoint=$SFT_MODEL_PATH \
     actor_rollout_ref.rollout.center_crop=True \
-    actor_rollout_ref.rollout.max_prompt_length=512 \
+    actor_rollout_ref.rollout.max_prompt_length=256 \
     actor_rollout_ref.rollout.log_prob_micro_batch_size=32 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.name=hf \

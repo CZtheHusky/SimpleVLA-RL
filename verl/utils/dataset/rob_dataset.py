@@ -17,7 +17,7 @@ import os
 from typing import List, Union
 
 import pandas as pd
-from grmanipulation.ppo_agent.grutopia_env_wrapper import TRAIN_IDS, VAL_IDS
+from grmanipulation.ppo_agent.constants import TRAIN_IDS, VAL_IDS
 import torch
 import numpy as np
 from torch.utils.data import Dataset, DataLoader

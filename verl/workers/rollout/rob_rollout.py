@@ -40,15 +40,16 @@ from libero.libero import benchmark
 from codetiming import Timer
 from collections import deque
 import random
-
+import time
 import multiprocessing
 import gc
+# from torch.multiprocessing import Process, Queue
 from multiprocessing import Process, Queue
 from collections import defaultdict
 from enum import Enum
 from verl.utils.env_utils.utils import obs_process, extract_action_vector, assemble_action_vla, action_decode, TaskSuite
 from verl.workers.rollout.env_workers.libero_env_worker import center_crop_image
-from grmanipulation.ppo_agent.grutopia_env_wrapper import GRUTopiaVecEnv, ActionType
+import ray
 
 __all__ = ['RobHFRollout']
 
@@ -87,7 +88,8 @@ class RobHFRollout(BaseRollout):
             self.max_steps = {
                 "StackCube-v1": 200,
             }
-            from verl.workers.rollout.env_workers.maniskill_env_worker import env_worker
+            from verl.workers.rollout.env_workers.maniskill_env_worker import env_worker, EnvActor
+            self.env_actor = EnvActor()
         elif "libero" in config.task_suite_name:
             self.max_steps = {   
                 "libero_spatial": 512,   # max step length 193
@@ -127,6 +129,7 @@ class RobHFRollout(BaseRollout):
 
 
     def generate_sequences(self, prompts):
+        start_time = time.time()
         batch_size = prompts.batch.batch_size[0]
         
         if prompts.meta_info.get('n_samples') is None:
@@ -138,6 +141,7 @@ class RobHFRollout(BaseRollout):
         batch_prompts = prompts.chunk(chunks=num_chunks)
         output = [self._generate_minibatch(p) for p in batch_prompts]
         output = DataProto.concat(output)
+        print("Batch generation time:", time.time() - start_time)
         return output
     
     
@@ -211,7 +215,7 @@ class RobHFRollout(BaseRollout):
             return self._generate_minibatch_libero(prompts)
         elif self.env_type == ENV_TYPE.VENV:
             return self._venv_generate_minibatch(prompts)
-            
+                           
     def _venv_generate_minibatch(self, prompts):
         self.module.eval()
         meta_info = prompts.meta_info
@@ -222,21 +226,23 @@ class RobHFRollout(BaseRollout):
         env_id = np.repeat(prompts.non_tensor_batch['env_id'], n_samples)
         is_valid = meta_info.get('n_samples') is None
         global_steps = meta_info.get('global_steps', 0) if is_valid else 0
-        max_steps = self.max_steps[self.config.task_suite_name]
+        infos_print = f"-------------------------------------------------\nenv_unique_id: {prompts.batch['env_unique_id']}\nshape: {prompts.batch['env_unique_id'].shape}\ntask_instruction: {prompts.non_tensor_batch['task_instruction']}\ntask_suite_name: {task_suite_name}\nenv_id: {prompts.non_tensor_batch['env_id']}\nglobal_steps: {global_steps}\nEnv_id: {env_id[0]}\nNum of envs: {len(env_unique_id.cpu().numpy().squeeze(1))}is_valid: {is_valid}"
+        print(infos_print)
+        max_steps = self.max_steps[env_id[0]]
         batch_size = env_unique_id.size(0)    # Num of grpo samples
-
-        input_q = Queue()
-        output_q = Queue()
-        p = Process(
-            target=self.env_worker,
-            args=(task_suite_name, env_id, env_unique_id, task_instruction, input_q, output_q, is_valid, global_steps, max_steps)
+        print("start init")
+        init_data = self.env_actor.init_venv(
+            env_id,
+            env_unique_id.cpu().numpy().squeeze(1),
+            task_instruction,
+            is_valid,
+            global_steps,
+            max_steps
         )
-        p.start()
+        print('init done')
         task_records = []
         valid_video = defaultdict(list)
-        
-        init_data = output_q.get(timeout=120)
-        assert init_data['type'] == 'init'
+        # print(init_data)
         task_instructions = init_data["task_instructions"]
         inputs = init_data['obs']
         task_records = {
@@ -253,6 +259,7 @@ class RobHFRollout(BaseRollout):
         while step < max_steps:
             current_inputs = inputs
             current_task_instructions = task_instructions
+            print("processing input")
             vla_input = self.process_input(current_inputs, current_task_instructions)
             vla_input.update(meta_info)
             vla_output = self._generate_one_step(vla_input)
@@ -267,8 +274,7 @@ class RobHFRollout(BaseRollout):
                     "step": step
                 }
             vla_history.append(step_data)
-            input_q.put(actions)
-            output = output_q.get(timeout=30)
+            output = self.env_actor.step(actions)
             is_complete = output['complete']
             finish_step = output['finish_step']
             for venv_index in range(len(is_already_done)):
@@ -283,13 +289,7 @@ class RobHFRollout(BaseRollout):
             assert output['type'] == 'step'
             inputs = output['obs']
             step += self.config.action_chunks_len
-        input_q.put(None)
-        p.join(timeout=20)
-        if p.is_alive():
-            p.terminate()
         torch.cuda.empty_cache()
-        del input_q
-        del output_q
         if is_valid:
             for task_file, images in valid_video.items():
                 complete = any(r['complete'] for r in task_records if r['task_file_name'] == task_file)
@@ -326,8 +326,8 @@ class RobHFRollout(BaseRollout):
             batch,
             batch_size=batch_size)
         return DataProto(batch=output_batch)     
-                           
-        
+     
+     
     def _generate_minibatch_libero(self, prompts):
         self.module.eval()
         meta_info = prompts.meta_info
@@ -637,8 +637,7 @@ class RobHFRollout(BaseRollout):
             num_patches_list = prompts['num_patches_list']
             
             img_context_token_id = tokenizer.convert_tokens_to_ids('<IMG_CONTEXT>',)
-            self.module.img_context_token_id = img_context_token_id
-
+            self.module.set_img_context_token_id(img_context_token_id)
             # if verbose and pixel_values is not None:
             #     image_bs = pixel_values.shape[0]
             #     print(f'dynamic ViT batch size: {image_bs}')
@@ -670,9 +669,10 @@ class RobHFRollout(BaseRollout):
             if isinstance(self.module, FSDP):
                 # recurse need to set to False according to https://github.com/pytorch/pytorch/issues/100069
                 param_ctx = FSDP.summon_full_params(self.module, writeback=False, recurse=False)
-            
+            print("start inference")
             with param_ctx:
                 with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
+                    pixel_values = pixel_values.to('cuda').to(torch.bfloat16)
                     generation_output = self.module.generate(
                         pixel_values=pixel_values,
                         input_ids=input_ids,
@@ -684,6 +684,7 @@ class RobHFRollout(BaseRollout):
                         top_p=top_p,
                         top_k=top_k,
                     )
+            print("inference done")
             full_seq = torch.concatenate((input_ids, generation_output), dim=-1)
             responses = tokenizer.batch_decode(generation_output, skip_special_tokens=True)
             string_response = [response.split(template.sep.strip())[0].strip() for response in responses]

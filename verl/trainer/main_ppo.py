@@ -101,16 +101,22 @@ import ray
 import hydra
 
 
-@hydra.main(config_path='config', config_name='internvl_ppo_trainer', version_base=None)
+@hydra.main(config_path='config', config_name='mani_ppo_trainer', version_base=None)
 def main(config):
+    ray_tmp_dir = "/mnt/nfs_rt/caozhe/ray_tmp"
     if not ray.is_initialized():
         # this is for local ray cluster
         if os.path.isfile(str(config.trainer.runtime_env)):
             with open(str(config.trainer.runtime_env), 'r') as f:
                 runtime_env = json.load(f)
-            ray.init(runtime_env=runtime_env)
+            # runtime_env['env_vars'].update({"RAY_DEBUG": "1"})
+            print(runtime_env)
+            ray.init(runtime_env=runtime_env, _temp_dir=ray_tmp_dir)
         else:
-            ray.init(runtime_env={'env_vars': {'TOKENIZERS_PARALLELISM': 'true', 'NCCL_DEBUG': 'WARN'}})
+            runtime_env = {'env_vars': {'TOKENIZERS_PARALLELISM': 'true', 'NCCL_DEBUG': 'WARN'}}
+            # runtime_env['env_vars'].update({"RAY_DEBUG": "1"})
+            print(runtime_env)
+            ray.init(runtime_env=runtime_env, _temp_dir=ray_tmp_dir)
 
     ray.get(main_task.remote(config))
 

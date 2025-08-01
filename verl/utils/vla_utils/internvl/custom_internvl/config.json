@@ -108,7 +108,7 @@
   },
   "max_dynamic_patch": 12,
   "min_dynamic_patch": 1,
-  "model_type": "internvla",
+  "model_type": "internvl_chat",
   "ps_version": "v2",
   "select_layer": -1,
   "template": "internlm2-chat",

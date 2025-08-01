@@ -577,6 +577,8 @@ class RayTrainer(object):
                             print(f"before filtering: {len(roll_batch)}")
                             filtered_roll_batch = self.filter(roll_batch.batch['acc'].unsqueeze(1), roll_batch, n_samples)
                             print(f"after filtering: {len(filtered_roll_batch)}")
+                        else:
+                            filtered_roll_batch = roll_batch
                     metrics['timing/acc&trunc_filter'] += timer.last
 
                     

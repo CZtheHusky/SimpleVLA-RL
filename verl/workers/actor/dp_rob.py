@@ -58,13 +58,37 @@ class RobDataParallelPPOActor(BasePPOActor):
         self.compute_entropy_from_logits = torch.compile(verl_F.entropy_from_logits, dynamic=True)
         self.rank = int(os.environ.get('rank', '0'))
        
-    def process_tensor(self, tensor, pad_id):
-        mask = tensor != pad_id
-        if not torch.all(mask == mask[0:1], dim=1).all():
-            raise ValueError("Padding error!")
-        base_mask = mask[0]
-        valid_len = base_mask.sum().item()
-        return tensor[:, base_mask], valid_len
+    # def process_tensor(self, tensor, pad_id):
+    #     mask = tensor != pad_id
+    #     if not torch.all(mask == mask[0:1], dim=1).all():
+    #         raise ValueError("Padding error!")
+    #     base_mask = mask[0]
+    #     valid_len = base_mask.sum().item()
+    #     return tensor[:, base_mask], valid_len
+    
+    def process_tensor(self, tensor: torch.Tensor, pad_id: int):
+        """
+        裁剪 left padding 的 tensor，并返回有效区域和 mask。
+        
+        参数:
+            tensor: [B, L] 的整数张量，left-padded。
+            pad_id: padding 的 token ID。
+            
+        返回:
+            cropped_tensor: [B, L_trimmed]，移除前导 pad 后的张量。
+            mask: [B, L_trimmed]，布尔张量，True 表示有效 token。
+        """
+        mask = tensor != pad_id  # [B, L]，True 表示有效 token
+        valid_starts = mask.float().argmax(dim=1)  # 每个 sample 第一个非 pad 的位置
+        valid_len = valid_starts.min().item()  # 所有样本中最晚开始的有效 token
+        max_start = valid_starts.max().item()  # 最早开始的有效 token
+        consistent_shape = True
+        if valid_len != max_start:
+            consistent_shape = False
+        cropped_tensor = tensor[:, valid_len:]  # 去掉最前面的统一 pad
+        cropped_mask = mask[:, valid_len:]
+        return cropped_tensor, (cropped_mask, consistent_shape)
+
     
     def generate_traj_mask(self, end_step, traj_len):
         """
@@ -135,11 +159,11 @@ class RobDataParallelPPOActor(BasePPOActor):
             attention_mask = attention_mask.reshape((batch_size * traj_len,) + attention_mask.shape[2:])
             pixel_values = pixel_values.reshape((batch_size * traj_len,) + pixel_values.shape[2:])
             responses = responses.reshape((batch_size * traj_len,) + responses.shape[2:])
-            breakpoint()
-            input_ids_unpad, _ = self.process_tensor(input_ids, self.pad_token_id)
-            attention_mask_unpad, _ = self.process_tensor(attention_mask, 0)
+            input_ids_unpad, (cropped_mask, consistent_shape) = self.process_tensor(input_ids, self.pad_token_id)
+            attention_mask_unpad, (cropped_mask, consistent_shape) = self.process_tensor(attention_mask, 0)
             
             if self.config.vla == "openvla-oft":
+                # assert consistent_shape, "Input ids should have consistent shape after removing padding"
                 logits = self.actor_module(input_ids=input_ids_unpad,
                                         attention_mask=attention_mask_unpad,
                                         pixel_values=pixel_values,
@@ -167,6 +191,7 @@ class RobDataParallelPPOActor(BasePPOActor):
                 entropy = entropy.reshape((batch_size, traj_len*response_length)) 
                 
             elif self.config.vla == "openvla":
+                # assert consistent_shape, "Input ids should have consistent shape after removing padding"
                 output = self.actor_module(input_ids=input_ids_unpad,
                                     attention_mask=attention_mask_unpad,
                                     pixel_values=pixel_values,
@@ -194,9 +219,10 @@ class RobDataParallelPPOActor(BasePPOActor):
                 output = self.actor_module(
                     pixel_values=pixel_values,
                     input_ids=input_ids_unpad,
-                    attention_mask=attention_mask,
+                    attention_mask=attention_mask_unpad,
                     use_cache=False  # prevent model thinks we are generating
                 )
+                # if self.rank == 0: breakpoint()
                 logits = output.logits
                 logits = logits[:, -response_length - 1:-1]  # (bsz, response_length)
                 logits = logits.div(temperature) 
@@ -204,10 +230,8 @@ class RobDataParallelPPOActor(BasePPOActor):
                 log_probs = logprobs_from_logits(logits, responses)
                 entropy = verl_F.entropy_from_logits(logits)  # (bsz, response_length)
                 #ADD
-                
                 log_probs = log_probs.reshape((batch_size, traj_len,) + log_probs.shape[1:])
                 entropy = entropy.reshape((batch_size, traj_len,) + entropy.shape[1:])
-
                 
                 mask = self.generate_traj_mask(micro_batch['finish_step'], traj_len)
                 log_probs, entropy = self.apply_mask_with_grad_control(log_probs, entropy, mask)
@@ -223,10 +247,11 @@ class RobDataParallelPPOActor(BasePPOActor):
         with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
             if self.config.vla == "openvla-oft":
                 
-                input_ids_unpad, _ = self.process_tensor(input_ids, self.pad_token_id)
-                attention_mask_unpad, _ = self.process_tensor(attention_mask, 0)
+                input_ids_unpad, (cropped_mask, consistent_shape) = self.process_tensor(input_ids, self.pad_token_id)
+                attention_mask_unpad, (cropped_mask, consistent_shape) = self.process_tensor(attention_mask, 0)
 
                 
+                # assert consistent_shape, "Input ids should have consistent shape after removing padding"
                 logits = self.actor_module(input_ids=input_ids_unpad,
                                                 attention_mask=attention_mask_unpad,
                                                 pixel_values=pixel_values,
@@ -251,8 +276,9 @@ class RobDataParallelPPOActor(BasePPOActor):
             
             elif self.config.vla == "openvla":
                 response_length = responses.size(-1)
-                input_ids_unpad, _ = self.process_tensor(input_ids, self.pad_token_id)
-                attention_mask_unpad, _ = self.process_tensor(attention_mask, 0)
+                input_ids_unpad, (cropped_mask, consistent_shape) = self.process_tensor(input_ids, self.pad_token_id)
+                attention_mask_unpad, (cropped_mask, consistent_shape) = self.process_tensor(attention_mask, 0)
+                # assert consistent_shape, "Input ids should have consistent shape after removing padding"
                 output = self.actor_module(input_ids=input_ids_unpad,
                                         attention_mask=attention_mask_unpad,
                                         pixel_values=pixel_values,
@@ -274,9 +300,10 @@ class RobDataParallelPPOActor(BasePPOActor):
             
             elif self.config.vla == "internvl_chat":
                 response_length = responses.size(-1)
-                input_ids_unpad, _ = self.process_tensor(input_ids, self.pad_token_id)
-                attention_mask_unpad, _ = self.process_tensor(attention_mask, 0)
+                input_ids_unpad, (cropped_mask, consistent_shape) = self.process_tensor(input_ids, self.pad_token_id)
+                attention_mask_unpad, (cropped_mask, consistent_shape) = self.process_tensor(attention_mask, 0)
                 pixel_values = pixel_values.reshape(-1, *pixel_values.shape[-3:])
+                # assert consistent_shape, "Input ids should have consistent shape after removing padding"
                 output = self.actor_module(input_ids=input_ids_unpad,
                                         attention_mask=attention_mask_unpad,
                                         pixel_values=pixel_values,
@@ -320,11 +347,11 @@ class RobDataParallelPPOActor(BasePPOActor):
             pixel_values = pixel_values.reshape((batch_size * traj_len,) + pixel_values.shape[2:])
             
             
-            input_ids_unpad, _ = self.process_tensor(input_ids, self.pad_token_id)
-            attention_mask_unpad, _ = self.process_tensor(attention_mask, 0)
+            input_ids_unpad, (cropped_mask, consistent_shape) = self.process_tensor(input_ids, self.pad_token_id)
+            attention_mask_unpad, (cropped_mask, consistent_shape) = self.process_tensor(attention_mask, 0)
 
             if  self.config.vla == "openvla-oft":
-            
+                # assert consistent_shape, "Input ids should have consistent shape after removing padding"
                 logits = self.actor_module(input_ids=input_ids_unpad,
                                                 attention_mask=attention_mask_unpad,
                                                 pixel_values=pixel_values,
@@ -346,6 +373,7 @@ class RobDataParallelPPOActor(BasePPOActor):
                 return entropy
             
             elif self.config.vla == "openvla":
+                # assert consistent_shape, "Input ids should have consistent shape after removing padding"
                 output = self.actor_module(input_ids=input_ids_unpad,
                                         attention_mask=attention_mask_unpad,
                                         pixel_values=pixel_values,

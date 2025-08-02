@@ -52,7 +52,7 @@ from verl.utils.env_utils.utils import obs_process, extract_action_vector, assem
 from verl.workers.rollout.env_workers.libero_env_worker import center_crop_image
 import ray
 import os
-from verl.utils.logger.local_logger import Logger
+from verl.utils.logger.local_logger import LocalLogger
 
 
 
@@ -74,6 +74,8 @@ class RobHFRollout(BaseRollout):
         super().__init__()
         self.config = config
         self.module = module
+        if isinstance(self.module, FSDP):
+            self.early_stop = True  # early stop for dp rollout
         # self.rank = int(os.environ.get("RANK", 0))
         self.processor = AutoProcessor.from_pretrained(config.pretrained_checkpoint, trust_remote_code=True)
         if config.vla == "internvl_chat":
@@ -223,6 +225,14 @@ class RobHFRollout(BaseRollout):
             return self._generate_minibatch_libero(prompts)
         elif self.env_type == ENV_TYPE.VENV:
             return self._venv_generate_minibatch(prompts)
+        
+    def early_stop_criteria(self, step, max_step, is_already_done):
+        if self.early_stop:
+            return step < max_step and not all(is_already_done)
+        else:
+            return step < max_step
+    
+        
                            
     def _venv_generate_minibatch(self, prompts):
         self.module.eval()
@@ -261,7 +271,7 @@ class RobHFRollout(BaseRollout):
         vla_history = []
         step = 0
         is_already_done = np.zeros(len(env_unique_id), dtype=bool)
-        while step < max_steps:
+        while self.early_stop_criteria(step, max_steps, is_already_done):
             current_inputs = inputs
             current_task_instructions = task_instructions
             # print(f"step: {step} processing input")

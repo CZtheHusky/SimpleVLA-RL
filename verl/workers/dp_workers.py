@@ -37,7 +37,7 @@ from verl.utils import hf_tokenizer
 from ..trainer.ppo import core_algos
 from verl.utils.py_functional import append_to_dict
 from codetiming import Timer
-from verl.utils.logger.local_logger import Logger
+from verl.utils.logger.local_logger import LocalLogger
 from verl.utils.model import print_model_size, update_model_config
 from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig, AutoImageProcessor, AutoModelForVision2Seq, AutoProcessor, AutoModelForCausalLM
 from torch import optim
@@ -69,10 +69,16 @@ class RobActorRolloutRefWorker(Worker):
         import torch.distributed
         if not torch.distributed.is_initialized():
             torch.distributed.init_process_group(backend="nccl")
-        self.logger = Logger(log_name="RobActorRolloutRefWorker",)
+        self.logger = LocalLogger(log_name="RobActorRolloutRefWorker",)
         # build device mesh
         world_size = torch.distributed.get_world_size()
-        self.logger.log(f"world size: {world_size}")
+        self.logger.log(f"world size: {world_size} rank: {self._rank}")
+        try:
+            rank = torch.distributed.get_rank()
+            self.logger.log(f"torch rank: {rank}")
+        except RuntimeError as e:
+            self.logger.log(f"RuntimeError: {e}, trying to initialize process group")
+            # torch.distributed.init_process_group(backend="nccl")
         self._is_lora = self.config.model.get('lora_rank', 0) > 0
         self.role = role
         assert self.role in ['actor', 'rollout', 'ref', 'actor_rollout', 'actor_rollout_ref']
@@ -224,9 +230,9 @@ class RobActorRolloutRefWorker(Worker):
             actor_module = get_peft_model(actor_module, LoraConfig(**lora_config))  
             actor_module.print_trainable_parameters()
             # lora end
-                
+        self.logger.log("before barrier")   
         torch.distributed.barrier()
-
+        self.logger.log("after barrier")
         if self.rank == 0:
             print_model_size(actor_module)
 

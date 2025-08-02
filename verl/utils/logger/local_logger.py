@@ -3,11 +3,12 @@ import logging
 from pathlib import Path
 import os
 
-class Logger:
+class LocalLogger:
     def __init__(self, log_dir="logs", log_name=None):
         pid = os.getpid()
+        log_dir = os.path.join(log_dir, log_name) if log_name else log_dir
         Path(log_dir).mkdir(parents=True, exist_ok=True)
-        log_path = os.path.join(log_dir, f"{log_name}_{pid}.log")
+        log_path = os.path.join(log_dir, f"{pid}.log")
 
         self.logger = logging.getLogger(f"Logger_{pid}")
         self.logger.setLevel(logging.INFO)

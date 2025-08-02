@@ -32,7 +32,7 @@ import verl.utils.torch_functional as verl_F
 from codetiming import Timer
 from flash_attn.bert_padding import pad_input, unpad_input, rearrange, index_first_axis
 import os
-from verl.utils.logger.local_logger import Logger
+from verl.utils.logger.local_logger import LocalLogger
 
 __all__ = ['RobDataParallelPPOActor']
 
@@ -55,8 +55,7 @@ class RobDataParallelPPOActor(BasePPOActor):
         self.ulysses_sequence_parallel_size = self.config.ulysses_sequence_parallel_size
         self.use_ulysses_sp = False #self.ulysses_sequence_parallel_size > 1
         self.compute_entropy_from_logits = torch.compile(verl_F.entropy_from_logits, dynamic=True)
-        self.logger = Logger(log_dir="logs", log_name="RobDataParallelPPOActor")  # Initialize logger
-        # self.rank = int(os.environ.get('rank', '0'))
+        self.logger = LocalLogger(log_dir="logs", log_name="RobDataParallelPPOActor")  # Initialize logger
        
     # def process_tensor(self, tensor, pad_id):
     #     mask = tensor != pad_id
@@ -586,10 +585,10 @@ class RobDataParallelPPOActor(BasePPOActor):
                     advantages_tmp = advantages[:, slice_id: next_slice_id]
                     response_mask_tmp = response_mask[:, slice_id: next_slice_id]
                     self.logger.log("compute policy loss")
-                    shapes = [old_log_prob_tmp.shape[-1], log_prob.shape[-1], advantages_tmp.shape[-1], response_mask_tmp.shape[-1]]
-                    if len(set(shapes)) != 1:
-                        self.logger.log(f"Shape mismatch detected: {shapes}")
-                        breakpoint()
+                    # shapes = [old_log_prob_tmp.shape[-1], log_prob.shape[-1], advantages_tmp.shape[-1], response_mask_tmp.shape[-1]]
+                    # if len(set(shapes)) != 1:
+                    #     self.logger.log(f"Shape mismatch detected: {shapes}")
+                    #     breakpoint()
 
                     pg_loss, pg_clipfrac, ppo_kl = core_algos.compute_policy_loss(old_log_prob=old_log_prob_tmp,
                                                                             log_prob=log_prob,

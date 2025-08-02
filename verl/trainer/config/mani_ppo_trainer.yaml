@@ -89,8 +89,8 @@ actor_rollout_ref:
     resize_target: [480, 480]
     experiment_name: maniskill
     unnorm_key: 
-    micro_batch_size: 1
-    val_micro_batch_size: 8
+    micro_batch_size: 1 # num of environments while ppo rollout, * num_samples with grpo
+    val_micro_batch_size: 8 # num of environments while validation
     model_family: internvl_chat
     task_suite_name: maniskill
     num_steps_wait: 10

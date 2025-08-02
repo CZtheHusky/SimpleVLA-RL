@@ -69,15 +69,15 @@ class RobActorRolloutRefWorker(Worker):
         import torch.distributed
         if not torch.distributed.is_initialized():
             torch.distributed.init_process_group(backend="nccl")
-        self.logger = LocalLogger(log_name="RobActorRolloutRefWorker",)
+        # self.logger = LocalLogger(log_name="RobActorRolloutRefWorker",)
         # build device mesh
         world_size = torch.distributed.get_world_size()
-        self.logger.log(f"world size: {world_size} rank: {self._rank}")
-        try:
-            rank = torch.distributed.get_rank()
-            self.logger.log(f"torch rank: {rank}")
-        except RuntimeError as e:
-            self.logger.log(f"RuntimeError: {e}, trying to initialize process group")
+        # self.logger.log(f"world size: {world_size} rank: {self._rank}")
+        # try:
+            # rank = torch.distributed.get_rank()
+            # self.logger.log(f"torch rank: {rank}")
+        # except RuntimeError as e:
+            # self.logger.log(f"RuntimeError: {e}, trying to initialize process group")
             # torch.distributed.init_process_group(backend="nccl")
         self._is_lora = self.config.model.get('lora_rank', 0) > 0
         self.role = role
@@ -95,7 +95,7 @@ class RobActorRolloutRefWorker(Worker):
             self.config.rollout.log_prob_micro_batch_size //= world_size
         if self._is_ref:
             self.config.ref.log_prob_micro_batch_size //= world_size
-        self.logger.log("init_done")
+        # self.logger.log("init_done")
 
     def _build_model_optimizer(self,
                                model_path,
@@ -103,9 +103,9 @@ class RobActorRolloutRefWorker(Worker):
                                override_model_config,
                                enable_gradient_checkpointing=False,
                                trust_remote_code=True):
-        self.logger.log("start init")
+        # self.logger.log("start init")
         log_gpu_memory_usage('Before init from HF AutoModel', logger=logger)
-        self.logger.log("gpu mem log, starting model init")
+        # self.logger.log("gpu mem log, starting model init")
         local_path = copy_local_path_from_hdfs(model_path)
         #add oft
         if self.config.model.vla == "openvla-oft":
@@ -151,9 +151,9 @@ class RobActorRolloutRefWorker(Worker):
 
         # note that we have to create model in fp32. Otherwise, the optimizer is in bf16, which is incorrect
         # TODO(zhangchi.usc1992): 1. support create from random initialized model. 2. Support init with FSDP directly
-        self.logger.log("tokenizer")
+        # self.logger.log("tokenizer")
         self.tokenizer = hf_tokenizer(local_path, trust_remote_code=trust_remote_code, model=self.config.model.vla)
-        self.logger.log("tokenizer done")
+        # self.logger.log("tokenizer done")
         torch_dtype = torch.float32 if self._is_actor else torch.bfloat16
 
         # override model kwargs
@@ -210,9 +210,9 @@ class RobActorRolloutRefWorker(Worker):
                 config=actor_model_config,
                 trust_remote_code=True,
             )
-        self.logger.log("model done")
+        # self.logger.log("model done")
         actor_module.to('cuda')
-        self.logger.log("model to cuda done")
+        # self.logger.log("model to cuda done")
         if enable_gradient_checkpointing:
             actor_module.gradient_checkpointing_enable()
         # lora add
@@ -230,9 +230,9 @@ class RobActorRolloutRefWorker(Worker):
             actor_module = get_peft_model(actor_module, LoraConfig(**lora_config))  
             actor_module.print_trainable_parameters()
             # lora end
-        self.logger.log("before barrier")   
+        # self.logger.log("before barrier")   
         torch.distributed.barrier()
-        self.logger.log("after barrier")
+        # self.logger.log("after barrier")
         if self.rank == 0:
             print_model_size(actor_module)
 
@@ -303,15 +303,15 @@ class RobActorRolloutRefWorker(Worker):
                 optim_config = self.config.actor.optim
             else:
                 optim_config = None
-            self.logger.log("init model optimizer")
-            self.logger.log(f"cuda: {torch.cuda.is_available()}, device count: {torch.cuda.device_count()}, device name: {torch.cuda.get_device_name(0)}")
+            # self.logger.log("init model optimizer")
+            # self.logger.log(f"cuda: {torch.cuda.is_available()}, device count: {torch.cuda.device_count()}, device name: {torch.cuda.get_device_name(0)}")
             self.actor_module, self.actor_optimizer, self.actor_lr_scheduler, self.actor_model_config = self._build_model_optimizer(
                 model_path=self.config.model.path,
                 optim_config=optim_config,
                 override_model_config=override_model_config,
                 enable_gradient_checkpointing=self.config.model.get('enable_gradient_checkpointing', False),
                 trust_remote_code=self.config.model.get('trust_remote_code', False)) #
-            self.logger.log("model optimizer done")
+            # self.logger.log("model optimizer done")
 
         # load from checkpoint
         if self._is_actor:

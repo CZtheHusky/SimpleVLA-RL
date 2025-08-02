@@ -112,8 +112,8 @@ class InternVLChatModel(PreTrainedModel):
         B, N, C = input_embeds.shape
         input_embeds = input_embeds.reshape(B * N, C)
 
-        if torch.distributed.get_rank() == 0:
-            print(f'dynamic ViT batch size: {vit_batch_size}, images per sample: {vit_batch_size / B}, dynamic token length: {N}')
+        # if torch.distributed.get_rank() == 0:
+        #     print(f'dynamic ViT batch size: {vit_batch_size}, images per sample: {vit_batch_size / B}, dynamic token length: {N}')
 
         input_ids = input_ids.reshape(B * N)
         selected = (input_ids == self.img_context_token_id)
@@ -219,9 +219,9 @@ class InternVLChatModel(PreTrainedModel):
                 f'but got {img_context_token_id}. Please set it before calling batch_chat.'
         self.img_context_token_id = img_context_token_id
 
-        if verbose and pixel_values is not None:
-            image_bs = pixel_values.shape[0]
-            print(f'dynamic ViT batch size: {image_bs}')
+        # if verbose and pixel_values is not None:
+        #     image_bs = pixel_values.shape[0]
+        #     print(f'dynamic ViT batch size: {image_bs}')
 
         queries = []
         for idx, num_patches in enumerate(num_patches_list):
@@ -272,9 +272,9 @@ class InternVLChatModel(PreTrainedModel):
                 f'but got {img_context_token_id}. Please set it before calling batch_chat.'
         self.img_context_token_id = img_context_token_id
 
-        if verbose and pixel_values is not None:
-            image_bs = pixel_values.shape[0]
-            print(f'dynamic ViT batch size: {image_bs}')
+        # if verbose and pixel_values is not None:
+        #     image_bs = pixel_values.shape[0]
+        #     print(f'dynamic ViT batch size: {image_bs}')
 
         queries = []
         for idx, num_patches in enumerate(num_patches_list):
@@ -337,9 +337,9 @@ class InternVLChatModel(PreTrainedModel):
         template.append_message(template.roles[1], None)
         query = template.get_prompt()
 
-        if verbose and pixel_values is not None:
-            image_bs = pixel_values.shape[0]
-            print(f'dynamic ViT batch size: {image_bs}')
+        # if verbose and pixel_values is not None:
+        #     image_bs = pixel_values.shape[0]
+        #     print(f'dynamic ViT batch size: {image_bs}')
 
         for num_patches in num_patches_list:
             image_tokens = IMG_START_TOKEN + IMG_CONTEXT_TOKEN * self.num_image_token * num_patches + IMG_END_TOKEN

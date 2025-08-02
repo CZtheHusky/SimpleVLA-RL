@@ -96,7 +96,7 @@ class RobHFRollout(BaseRollout):
                 self.process_kwargs['dual_cam'] = False
             self.env_type = ENV_TYPE.VENV
             self.max_steps = {
-                "StackCube-v1": 12,
+                "StackCube-v1": 200,
             }
             from verl.workers.rollout.env_workers.maniskill_env_worker import env_worker, EnvActor
             self.env_actor = EnvActor()
@@ -228,13 +228,11 @@ class RobHFRollout(BaseRollout):
         elif self.env_type == ENV_TYPE.VENV:
             return self._venv_generate_minibatch(prompts)
         
-    def early_stop_criteria(self, step, max_step, is_already_done):
+    def should_continue(self, step, max_step, is_already_done):
         if self.early_stop:
-            return step < max_step and not all(is_already_done)
+            return step < max_step and not np.all(is_already_done)
         else:
             return step < max_step
-    
-        
                            
     def _venv_generate_minibatch(self, prompts):
         self.module.eval()
@@ -273,7 +271,7 @@ class RobHFRollout(BaseRollout):
         vla_history = []
         step = 0
         is_already_done = np.zeros(len(env_unique_id), dtype=bool)
-        while self.early_stop_criteria(step, max_steps, is_already_done):
+        while self.should_continue(step, max_steps, is_already_done):
             current_inputs = inputs
             current_task_instructions = task_instructions
             # print(f"step: {step} processing input")

@@ -55,7 +55,7 @@ class RobDataParallelPPOActor(BasePPOActor):
         self.ulysses_sequence_parallel_size = self.config.ulysses_sequence_parallel_size
         self.use_ulysses_sp = False #self.ulysses_sequence_parallel_size > 1
         self.compute_entropy_from_logits = torch.compile(verl_F.entropy_from_logits, dynamic=True)
-        self.logger = LocalLogger(log_dir="logs", log_name="RobDataParallelPPOActor")  # Initialize logger
+        # self.logger = LocalLogger(log_dir="logs", log_name="RobDataParallelPPOActor")  # Initialize logger
        
     # def process_tensor(self, tensor, pad_id):
     #     mask = tensor != pad_id
@@ -218,13 +218,13 @@ class RobDataParallelPPOActor(BasePPOActor):
                 log_probs = log_probs.contiguous().view((batch_size, traj_len*response_length))
                 entropy = entropy.contiguous().view((batch_size, traj_len*response_length))
             elif self.config.vla == "internvl_chat":
-                if not consistent_shape:
-                    self.logger.log(f"_forward_micro_batch: warning: input_ids has inconsistent shape after removing padding, valid_len: {valid_len} max_start: {max_start}, this may cause issues in internvl_chat")
+                # if not consistent_shape:
+                    # self.logger.log(f"_forward_micro_batch: warning: input_ids has inconsistent shape after removing padding, valid_len: {valid_len} max_start: {max_start}, this may cause issues in internvl_chat")
                 pixel_values = pixel_values.contiguous().view(-1, *pixel_values.shape[-3:])  # (batch_size * traj_len, C, H, W)
                 output = self.actor_module(
                     pixel_values=pixel_values,
-                    input_ids=input_ids,
-                    attention_mask=attention_mask,
+                    input_ids=input_ids_unpad,
+                    attention_mask=attention_mask_unpad,
                     use_cache=False  # prevent model thinks we are generating
                 )
                 # if self.rank == 0: breakpoint()
@@ -402,11 +402,11 @@ class RobDataParallelPPOActor(BasePPOActor):
                 return entropy
             
             elif self.config.vla == "internvl_chat":
-                if not consistent_shape:
-                    self.logger.log(f"_forward_micro_batch_entropy: warning: input_ids has inconsistent shape after removing padding, valid_len: {valid_len} max_start: {max_start}, this may cause issues in internvl_chat")
+                # if not consistent_shape:
+                    # self.logger.log(f"_forward_micro_batch_entropy: warning: input_ids has inconsistent shape after removing padding, valid_len: {valid_len} max_start: {max_start}, this may cause issues in internvl_chat")
                 pixel_values = pixel_values.contiguous().view(-1, *pixel_values.shape[-3:])  # (batch_size * traj_len, C, H, W)
-                output = self.actor_module(input_ids=input_ids,
-                                        attention_mask=attention_mask,
+                output = self.actor_module(input_ids=input_ids_unpad,
+                                        attention_mask=attention_mask_unpad,
                                         pixel_values=pixel_values,
                                         use_cache=False)  # prevent model thinks we are generating
                 logits = output.logits
@@ -543,21 +543,10 @@ class RobDataParallelPPOActor(BasePPOActor):
                 pixel_values = data["pixel_values"]
                 responses = data["responses"]
                 
-                self.logger.log(f"batch size: {batch_size}, traj_len: {traj_len}, tot_pad_len: {tot_pad_len}")
-                self.logger.log(debug_tensor(input_ids, 'input_ids'))
-                self.logger.log(debug_tensor(attention_mask, 'attention_mask'))
-                self.logger.log(debug_tensor(pixel_values, 'pixel_values'))
-                # self.logger.log(debug_tensor(responses, 'responses'))
-                
                 input_ids = input_ids.contiguous().view((batch_size * traj_len,) + input_ids.shape[2:])
                 attention_mask = attention_mask.contiguous().view((batch_size * traj_len,) + attention_mask.shape[2:])
                 pixel_values = pixel_values.contiguous().view((batch_size * traj_len,) + pixel_values.shape[2:])
                 responses = responses.contiguous().view((batch_size * traj_len,) + responses.shape[2:])
-                self.logger.log(f"contiguous().viewd input_ids shape: {input_ids.shape}, attention_mask shape: {attention_mask.shape}, pixel_values shape: {pixel_values.shape}, responses shape: {responses.shape}")
-                self.logger.log(debug_tensor(input_ids, 'input_ids'))
-                self.logger.log(debug_tensor(attention_mask, 'attention_mask'))
-                self.logger.log(debug_tensor(pixel_values, 'pixel_values'))
-                self.logger.log(debug_tensor(responses, 'responses'))
                 loss_info = {
                     #'actor/entropy_loss': entropy_loss.detach().item(),
                     'actor/pg_loss':0,
@@ -571,24 +560,13 @@ class RobDataParallelPPOActor(BasePPOActor):
                 
                 # if self.rank == 0: breakpoint()
                 for i in range(0, traj_len, int(traj_len / traj_split_num)):
-                    self.logger.log(f"micro batch update {i} to {i + int(traj_len / traj_split_num)}")
                     entropy, log_prob = self._forward_micro_batch_update(input_ids=input_ids[i:i+int(traj_len/traj_split_num)], attention_mask=attention_mask[i:i+int(traj_len/traj_split_num)], pixel_values=pixel_values[i:i+int(traj_len/traj_split_num)], responses=responses[i:i+int(traj_len/traj_split_num)], temperature=temperature)
-                    self.logger.log(debug_tensor(input_ids[i:i+int(traj_len/traj_split_num)], 'input_ids_slice'))
-                    self.logger.log(debug_tensor(attention_mask[i:i+int(traj_len/traj_split_num)], 'attention_mask_slice'))
-                    self.logger.log(debug_tensor(pixel_values[i:i+int(traj_len/traj_split_num)], 'pixel_values_slice'))
-                    self.logger.log(debug_tensor(responses[i:i+int(traj_len/traj_split_num)], 'responses_slice'))
-                    
                     slice_id = i * self.config.action_token_len * self.config.action_chunks_len
                     next_slice_id = (i + int(traj_len / traj_split_num)) * self.config.action_token_len * self.config.action_chunks_len
                     assert next_slice_id <= old_log_prob.shape[-1], f"next_slice_id {next_slice_id} exceeds old_log_prob size {old_log_prob.shape[-1]}"
                     old_log_prob_tmp = old_log_prob[:, slice_id: next_slice_id]
                     advantages_tmp = advantages[:, slice_id: next_slice_id]
                     response_mask_tmp = response_mask[:, slice_id: next_slice_id]
-                    self.logger.log("compute policy loss")
-                    # shapes = [old_log_prob_tmp.shape[-1], log_prob.shape[-1], advantages_tmp.shape[-1], response_mask_tmp.shape[-1]]
-                    # if len(set(shapes)) != 1:
-                    #     self.logger.log(f"Shape mismatch detected: {shapes}")
-                    #     breakpoint()
 
                     pg_loss, pg_clipfrac, ppo_kl = core_algos.compute_policy_loss(old_log_prob=old_log_prob_tmp,
                                                                             log_prob=log_prob,
@@ -596,10 +574,7 @@ class RobDataParallelPPOActor(BasePPOActor):
                                                                             eos_mask=response_mask_tmp,
                                                                             clip_ratio_high=clip_ratio_high,
                                                                             clip_ratio_low=clip_ratio_low)
-                    self.logger.log(debug_tensor(old_log_prob_tmp, 'old_log_prob_tmp'))
-                    self.logger.log(debug_tensor(log_prob, 'log_prob'))
-                    self.logger.log(debug_tensor(advantages_tmp, 'advantages_tmp'))
-                    self.logger.log(debug_tensor(response_mask_tmp, 'response_mask_tmp'))
+
                     response_mask_tmp_sum = response_mask_tmp.sum(axis=None)
                     pg_loss = pg_loss * response_mask_tmp_sum
                     pg_clipfrac = pg_clipfrac * response_mask_tmp_sum / response_mask_sum
@@ -608,22 +583,13 @@ class RobDataParallelPPOActor(BasePPOActor):
                     policy_loss = pg_loss / response_mask_sum
                     
                     loss = policy_loss / self.gradient_accumulation
-                    self.logger.log("loss done")
-                    
-                    self.logger.log(f"slice: {slice_id} to {next_slice_id}")
-                    self.logger.log(f"shapes: {old_log_prob_tmp.shape}, {log_prob.shape}, {advantages_tmp.shape}, {response_mask_tmp.shape}")
-                    self.logger.log(f"nan check: {torch.isnan(loss).any().item()}, {torch.isinf(loss).any().item()}")
-                    self.logger.log("start backward")
                     loss.backward()
-                    self.logger.log("backward done")
                     loss_info['actor/pg_loss'] =  loss_info['actor/pg_loss'] + policy_loss.detach().item()
                     loss_info['actor/pg_clipfrac'] = loss_info['actor/pg_clipfrac'] + pg_clipfrac.detach().item()
                     loss_info['actor/ppo_kl'] = loss_info['actor/ppo_kl'] +  ppo_kl.detach().item()
 
                 append_to_dict(metrics, loss_info)
-            self.logger.log("micro batch update done")
             grad_norm = self._optimizer_step()
-            self.logger.log("optimizer step done")
             data = {'actor/grad_norm': grad_norm.detach().item()}
             append_to_dict(metrics, data)
             torch.cuda.empty_cache()

@@ -153,8 +153,11 @@ def main_task(config):
         ray_worker_group_cls = NVMegatronRayWorkerGroup
 
     else:
-        raise NotImplementedError
-
+        assert config.actor_rollout_ref.actor.strategy == config.critic.strategy
+        from verl.workers.dp_workers import CriticWorker, RobActorRolloutRefWorker
+        from verl.single_controller.ray import RayWorkerGroup
+        ray_worker_group_cls = RayWorkerGroup
+        
     from verl.trainer.ppo.ray_trainer import ResourcePoolManager, Role
 
     role_worker_mapping = {

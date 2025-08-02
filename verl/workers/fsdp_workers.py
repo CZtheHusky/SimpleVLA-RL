@@ -422,8 +422,8 @@ class RobActorRolloutRefWorker(Worker):
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
     def update_actor(self, data: DataProto):
         #data = data.to('cuda')
-
         assert self._is_actor
+        print("off load param")
         if self._is_offload_param:
             load_fsdp_param_and_grad(module=self.actor_module_fsdp,
                                      device_id=torch.cuda.current_device(),
@@ -434,9 +434,7 @@ class RobActorRolloutRefWorker(Worker):
         #data.batch = data.batch.cuda()
 
         log_gpu_memory_usage('Before update policy', logger=logger)
-
         metrics = self.actor.update_policy(data=data)
-
         self.actor_lr_scheduler.step()
         lr = self.actor_lr_scheduler.get_last_lr()[0]
         metrics['actor/lr(1e-4)'] = lr * 1e4

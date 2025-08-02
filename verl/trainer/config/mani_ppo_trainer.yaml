@@ -43,7 +43,7 @@ actor_rollout_ref:
     action_token_len: ${actor_rollout_ref.model.action_token_len}
     action_chunks_len: ${actor_rollout_ref.model.action_chunks_len}
     strategy: fsdp  # This is for backward-compatibility
-    traj_mini_batch_size: 16
+    traj_mini_batch_size: 16  # each trajectory is splitted into several chunks of lenght traj_mini_batch_size, so the max_step of the trajectory should be divisible by traj_mini_batch_size
     ppo_mini_batch_size: 256
     ppo_micro_batch_size: 64
     use_dynamic_bsz: False

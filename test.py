@@ -17,20 +17,27 @@ import torch
 
 
 
-local_path = "deltaQ_backbone"
+local_path = "/mnt/nfs_68/caozhe/workspace/vlav-project/maniskill_stack_cubes_dual/internvl2-2b/v0-20250729-171130/checkpoint-640"
 torch_dtype = torch.bfloat16
 actor_model_config = AutoConfig.from_pretrained(local_path, trust_remote_code=True)
 
-# model = AutoModelForCausalLM.from_pretrained(
-#     pretrained_model_name_or_path=local_path,
-#     torch_dtype=torch_dtype,
-#     config=actor_model_config,
-#     trust_remote_code=True,
-# ).eval().cuda()
+model = AutoModelForCausalLM.from_pretrained(
+    pretrained_model_name_or_path=local_path,
+    torch_dtype=torch_dtype,
+    config=actor_model_config,
+    trust_remote_code=True,
+).eval().cuda()
 tokenizer = AutoTokenizer.from_pretrained(local_path, trust_remote_code=True, use_fast=False)
-img_context_token_id = tokenizer.convert_tokens_to_ids('<IMG_CONTEXT>',)
-# processor = AutoProcessor.from_pretrained(local_path, trust_remote_code=True)
-print(img_context_token_id)
+# img_context_token_id = tokenizer.convert_tokens_to_ids('<IMG_CONTEXT>',)
+# # processor = AutoProcessor.from_pretrained(local_path, trust_remote_code=True)
+# print(img_context_token_id)
+
+
+
+
+
+
+
 import json
 
 def read_jsonl_standard(file_path: str) -> list:

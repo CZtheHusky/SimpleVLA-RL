@@ -25,7 +25,7 @@ NUM_GPUS=4
 NUM_NODES=1 
 ALIGN_PATH="/home/caozhe/workspace/SimpleVLA-RL/align.json"
 
-HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=4,5,6,7 python -m verl.trainer.main_ppo \
+HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=4,5,6,3 python -m verl.trainer.main_ppo \
     data.task_suite_name=$DATASET_NAME \
     data.n_samples=8 \
     data.filter_accuracy=False \
@@ -37,6 +37,9 @@ HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=4,5,6,7 python -m verl.trainer.main_ppo 
     data.num_envs_seeds=160  \
     data.max_prompt_length=700 \
     data.max_response_length=16 \
+    actor_rollout_ref.actor.strategy=dp \
+    critic.strategy=dp  \
+    reward_model.strategy=dp \
     actor_rollout_ref.model.path=$SFT_MODEL_PATH \
     actor_rollout_ref.model.vla=$VLA_NAME \
     actor_rollout_ref.model.action_token_len=16 \
@@ -82,8 +85,8 @@ HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=4,5,6,7 python -m verl.trainer.main_ppo 
     trainer.default_local_dir=$CKPT_PATH/$PROJECT_NAME/$EXPERIMENT_NAME \
     trainer.n_gpus_per_node=$NUM_GPUS \
     trainer.nnodes=$NUM_NODES \
-    trainer.save_freq=25 \
-    trainer.test_freq=4 \
+    trainer.save_freq=1 \
+    trainer.test_freq=1 \
     trainer.total_epochs=100 \
     trainer.val_only=False \
     algorithm.adv_estimator=grpo \

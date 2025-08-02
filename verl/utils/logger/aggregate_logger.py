@@ -111,3 +111,4 @@ class LocalLogger:
     def get_log_path(self) -> str:
         """Return the path to the log file."""
         return self.log_path
+    

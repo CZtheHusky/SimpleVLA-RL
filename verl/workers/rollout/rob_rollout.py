@@ -52,6 +52,9 @@ from verl.utils.env_utils.utils import obs_process, extract_action_vector, assem
 from verl.workers.rollout.env_workers.libero_env_worker import center_crop_image
 import ray
 import os
+from verl.utils.logger.local_logger import Logger
+
+
 
 __all__ = ['RobHFRollout']
 
@@ -71,7 +74,7 @@ class RobHFRollout(BaseRollout):
         super().__init__()
         self.config = config
         self.module = module
-        self.rank = int(os.environ.get("RANK", 0))
+        # self.rank = int(os.environ.get("RANK", 0))
         self.processor = AutoProcessor.from_pretrained(config.pretrained_checkpoint, trust_remote_code=True)
         if config.vla == "internvl_chat":
             self.response_length = 16 if config.response_length is None else config.response_length
@@ -89,7 +92,7 @@ class RobHFRollout(BaseRollout):
                 self.process_kwargs['dual_cam'] = False
             self.env_type = ENV_TYPE.VENV
             self.max_steps = {
-                "StackCube-v1": 10,
+                "StackCube-v1": 12,
             }
             from verl.workers.rollout.env_workers.maniskill_env_worker import env_worker, EnvActor
             self.env_actor = EnvActor()
@@ -132,7 +135,7 @@ class RobHFRollout(BaseRollout):
 
 
     def generate_sequences(self, prompts):
-        start_time = time.time()
+        # start_time = time.time()
         batch_size = prompts.batch.batch_size[0]
         
         if prompts.meta_info.get('n_samples') is None:  # validatino rollout
@@ -146,7 +149,7 @@ class RobHFRollout(BaseRollout):
         batch_prompts = prompts.chunk(chunks=num_chunks)
         output = [self._generate_minibatch(p) for p in batch_prompts]
         output = DataProto.concat(output)
-        print("Batch generation time:", time.time() - start_time)
+        # print("Batch generation time:", time.time() - start_time)
         return output
     
     
@@ -252,9 +255,9 @@ class RobHFRollout(BaseRollout):
             "finish_step": init_data['finish_step'],
             "task_file_name": init_data['task_file_name']
         }
-        if is_valid:
-            for venv_index in init_data['task_file_name'].keys():
-                valid_video[venv_index].append(init_data['valid_images'][int(venv_index)])
+        # if is_valid:
+        #     for venv_index in init_data['task_file_name'].keys():
+        #         valid_video[venv_index].append(init_data['valid_images'][int(venv_index)])
         vla_history = []
         step = 0
         is_already_done = np.zeros(len(env_unique_id), dtype=bool)
@@ -489,6 +492,8 @@ class RobHFRollout(BaseRollout):
             if isinstance(self.module, FSDP):
                 # recurse need to set to False according to https://github.com/pytorch/pytorch/issues/100069
                 param_ctx = FSDP.summon_full_params(self.module, writeback=False, recurse=False)
+            else:
+                param_ctx = contextlib.nullcontext()
             
             with param_ctx:
                 with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
@@ -554,6 +559,8 @@ class RobHFRollout(BaseRollout):
             if isinstance(self.module, FSDP):
                 # recurse need to set to False according to https://github.com/pytorch/pytorch/issues/100069
                 param_ctx = FSDP.summon_full_params(self.module, writeback=False, recurse=False)
+            else:
+                param_ctx = contextlib.nullcontext()
             
             with param_ctx:
                 with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
@@ -637,7 +644,7 @@ class RobHFRollout(BaseRollout):
             questions = prompts['questions']
             num_patches_list = prompts['num_patches_list']
             
-            img_context_token_id = tokenizer.convert_tokens_to_ids('<IMG_CONTEXT>',)
+            # img_context_token_id = tokenizer.convert_tokens_to_ids('<IMG_CONTEXT>',)
             # self.module.set_img_context_token_id(img_context_token_id)
             # if verbose and pixel_values is not None:
             #     image_bs = pixel_values.shape[0]
@@ -672,6 +679,8 @@ class RobHFRollout(BaseRollout):
             if isinstance(self.module, FSDP):
                 # recurse need to set to False according to https://github.com/pytorch/pytorch/issues/100069
                 param_ctx = FSDP.summon_full_params(self.module, writeback=False, recurse=False)
+            else:
+                param_ctx = contextlib.nullcontext()
             # questions_str += f"start inference\nlen inputs: {input_ids.shape}\npixel_values: {pixel_values.shape}"
             # print(questions_str)
             with param_ctx:
@@ -711,7 +720,7 @@ class RobHFRollout(BaseRollout):
                 'input_ids': full_seq,
                 'attention_mask': attention_mask,
                 'pixel_values': torch.reshape(pixel_values, (input_ids.shape[0], -1) + pixel_values.shape[1:]),
-                'action': actions,
+                'action': (actions, string_response),
             } 
             
     def _obs_to_input(self, obs):
@@ -734,3 +743,4 @@ class RobHFRollout(BaseRollout):
                     obs["robot0_gripper_qpos"]
                 ])
             }
+            

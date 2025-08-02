@@ -52,7 +52,6 @@ from verl.utils.env_utils.utils import obs_process, extract_action_vector, assem
 from verl.workers.rollout.env_workers.libero_env_worker import center_crop_image
 import ray
 import os
-from verl.utils.logger.local_logger import LocalLogger
 
 
 
@@ -70,7 +69,7 @@ class ENV_TYPE(Enum):
 
 class RobHFRollout(BaseRollout):
 
-    def __init__(self, module: nn.Module, config):
+    def __init__(self, module: nn.Module, config, dt_flag: str = None, logger=None):
         super().__init__()
         self.config = config
         self.module = module
@@ -79,11 +78,13 @@ class RobHFRollout(BaseRollout):
         else:
             self.early_stop = False
         # self.rank = int(os.environ.get("RANK", 0))
+        self.dt_flag = dt_flag
         self.processor = AutoProcessor.from_pretrained(config.pretrained_checkpoint, trust_remote_code=True)
         if config.vla == "internvl_chat":
             self.response_length = 16 if config.response_length is None else config.response_length
         self.vla_preprocess()
         self.process_kwargs = {}
+        self.logger = logger
         if config.task_suite_name == "grutopia":
             self.task_suite = TaskSuite.GRUTOPIA
             self.env_type = ENV_TYPE.VENV
@@ -99,7 +100,7 @@ class RobHFRollout(BaseRollout):
                 "StackCube-v1": 200,
             }
             from verl.workers.rollout.env_workers.maniskill_env_worker import env_worker, EnvActor
-            self.env_actor = EnvActor()
+            self.env_actor = EnvActor(pid=os.getpid())
         elif "libero" in config.task_suite_name:
             self.max_steps = {   
                 "libero_spatial": 512,   # max step length 193
@@ -112,7 +113,9 @@ class RobHFRollout(BaseRollout):
             self.env_type = ENV_TYPE.SINGLE_ENV
             from verl.workers.rollout.env_workers.libero_env_worker import env_worker
         self.env_worker = env_worker
-        
+        rollout_dir = os.path.join("rollouts", config.experiment_name, dt_flag)
+        os.makedirs(rollout_dir, exist_ok=True)
+        self.rollout_dir = rollout_dir
         #oft add
         # unnorm_key=config.unnorm_key
         # if  unnorm_key not in self.module.norm_stats and f"{unnorm_key}_no_noops" in self.module.norm_stats:
@@ -157,9 +160,9 @@ class RobHFRollout(BaseRollout):
         return output
     
     
-    def process_input(self, inputs:list, task_descriptions:list):
+    def process_input(self, inputs:list, task_descriptions:list, done_mask=None):
         if self.config.vla == "internvl_chat":
-            batchdata = obs_process(inputs, task_descriptions, self.task_suite, **self.process_kwargs)
+            batchdata = obs_process(inputs, task_descriptions, self.task_suite, done_mask, **self.process_kwargs)
             return batchdata
         batchdata = {"input_ids":[],"attention_mask":[],"pixel_values":[]}  
         
@@ -270,26 +273,37 @@ class RobHFRollout(BaseRollout):
         #         valid_video[venv_index].append(init_data['valid_images'][int(venv_index)])
         vla_history = []
         step = 0
-        is_already_done = np.zeros(len(env_unique_id), dtype=bool)
+        is_already_done = torch.zeros(len(env_unique_id), dtype=torch.bool).cuda()
+        vla_output = None
         while self.should_continue(step, max_steps, is_already_done):
             current_inputs = inputs
             current_task_instructions = task_instructions
             # print(f"step: {step} processing input")
-            vla_input = self.process_input(current_inputs, current_task_instructions)
+            vla_input = self.process_input(current_inputs, current_task_instructions, is_already_done)
             vla_input.update(meta_info)
-            vla_output = self._generate_one_step(vla_input, step)
-            actions = vla_output["action"]
-            
+            tmp_vla_output = self._generate_one_step(vla_input, step)
+            tmp_vec_action, tmp_string_response = tmp_vla_output["action"]
+            if vla_output is not None:
+                mask = ~is_already_done
+                mask_cpu = mask.cpu().numpy()
+                vla_output["responses"][mask] = tmp_vla_output["responses"]
+                vla_output["input_ids"][mask] = tmp_vla_output["input_ids"]
+                vla_output["attention_mask"][mask] = tmp_vla_output["attention_mask"]
+                vec_action[mask_cpu] = tmp_vec_action
+                mask_positions = np.nonzero(mask_cpu)[0]
+                for idx, out_str in zip(mask_positions, tmp_string_response):
+                    string_response[idx] = out_str
+            else:
+                vla_output = tmp_vla_output
+                vec_action, string_response = tmp_vla_output["action"]
             step_data = {
                     "responses": vla_output["responses"],
                     "input_ids": vla_output["input_ids"],
                     "attention_mask": vla_output["attention_mask"],
                     "pixel_values": vla_output["pixel_values"],
-                    "action": actions,
-                    "step": step
                 }
             vla_history.append(step_data)
-            output = self.env_actor.step(actions)
+            output = self.env_actor.step((vec_action, string_response))
             is_complete = output['complete']
             finish_step = output['finish_step']
             for venv_index in range(len(is_already_done)):
@@ -303,15 +317,22 @@ class RobHFRollout(BaseRollout):
             inputs = output['obs']
             step += self.config.action_chunks_len
         torch.cuda.empty_cache()
+        desired_steps = (max_steps + self.config.action_chunks_len - 1) // self.config.action_chunks_len
+        current = len(vla_history)
+        if current < desired_steps:
+            print("padding")
+            pad_count = desired_steps - current
+            pad_entry = {k: torch.zeros_like(vla_history[0][k], device=vla_history[0][k].device) for k in vla_history[0]}
+            for _ in range(pad_count):
+                vla_history.append(pad_entry.copy())
         if is_valid:
             for venv_idx, images in valid_video.items():
                 complete = task_records['complete'][venv_idx]
                 task_file = task_records['task_file_name'][venv_idx]
                 save_rollout_video(
                     images,
-                    self.config.experiment_name,
+                    self.rollout_dir,
                     task_file,
-                    global_steps,
                     complete
                 )    
         self.module.train()
@@ -328,7 +349,6 @@ class RobHFRollout(BaseRollout):
                     
         for k,v in batch.items():
             batch[k] = torch.stack(v,dim=1) 
-  
         
         for k in task_records.keys():
             batch[k] = task_records[k]
@@ -339,7 +359,7 @@ class RobHFRollout(BaseRollout):
         output_batch = TensorDict(
             batch,
             batch_size=batch_size)
-        return DataProto(batch=output_batch)     
+        return DataProto(batch=output_batch)
      
      
     def _generate_minibatch_libero(self, prompts):

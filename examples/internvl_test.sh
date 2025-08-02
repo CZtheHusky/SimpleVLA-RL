@@ -1,14 +1,17 @@
 set -x
 
-# export NCCL_DEBUG=INFO
-# export NCCL_ASYNC_ERROR_HANDLING=1
-# export TORCH_DISTRIBUTED_DEBUG=DETAIL
+export NCCL_DEBUG=INFO
+export NCCL_ASYNC_ERROR_HANDLING=1
+export TORCH_DISTRIBUTED_DEBUG=DETAIL
+
+
 # export NCCL_DEBUG=WARN 
 export WANDB_API_KEY='1d0ffcbb9b10d1e1f1bf85b01de94b7d377b826a'
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export TOKENIZERS_PARALLELISM=true
 export CUDA_LAUNCH_BLOCKING=1
 export TORCH_USE_CUDA_DSA=1
+export PYTHONPATH="/home/caozhe/workspace/SimpleVLA-RL:$PYTHONPATH"
 PROJECT_NAME='SimpleVLA-RL'
 EXPERIMENT_NAME='maniskill' 
 # For openvla-oft Libero-Long traj1 SFT or traj all SFT models can be find in https://huggingface.co/collections/Haozhan72/simplevla-rl-6833311430cd9df52aeb1f86
@@ -29,9 +32,10 @@ HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=4,5,6,7 python -m verl.trainer.main_ppo 
     data.accuracy_lower_bound=0.1 \
     data.accuracy_upper_bound=0.9 \
     data.oversample_factor=1 \
-    data.train_batch_size=32 \
-    data.val_batch_size=200 \
-    data.num_envs_seeds=4096  \
+    data.train_batch_size=8 \
+    data.val_batch_size=8 \
+    data.rob_dataset_kwargs.num_envs_seeds=4096  \
+    data.rob_dataset_kwargs.len_dataset=160 \
     data.max_prompt_length=700 \
     data.max_response_length=16 \
     actor_rollout_ref.actor.strategy=dp \
@@ -43,7 +47,7 @@ HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=4,5,6,7 python -m verl.trainer.main_ppo 
     actor_rollout_ref.model.action_chunks_len=1 \
     actor_rollout_ref.actor.optim.lr=5e-6 \
     actor_rollout_ref.actor.optim.warmup_style=constant \
-    actor_rollout_ref.actor.ppo_mini_batch_size=128 \
+    actor_rollout_ref.actor.ppo_mini_batch_size=$NUM_GPUS \
     actor_rollout_ref.actor.ppo_micro_batch_size=$NUM_GPUS \
     actor_rollout_ref.actor.use_dynamic_bsz=False \
     actor_rollout_ref.actor.fsdp_config.param_offload=False \
@@ -53,15 +57,15 @@ HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=4,5,6,7 python -m verl.trainer.main_ppo 
     actor_rollout_ref.actor.clip_ratio_high=0.28 \
     actor_rollout_ref.actor.clip_ratio_low=0.2 \
     actor_rollout_ref.actor.num_images_in_input=2 \
-    actor_rollout_ref.actor.traj_mini_batch_size=100 \
+    actor_rollout_ref.actor.traj_mini_batch_size=4 \
     actor_rollout_ref.model.enable_gradient_checkpointing=False \
     actor_rollout_ref.model.use_remove_padding=False \
     actor_rollout_ref.actor.entropy_coeff=0. \
     actor_rollout_ref.rollout.num_images_in_input=2 \
-    actor_rollout_ref.rollout.val_micro_batch_size=200 \
+    actor_rollout_ref.rollout.val_micro_batch_size=2 \
     actor_rollout_ref.rollout.temperature=1 \
     actor_rollout_ref.rollout.experiment_name=$EXPERIMENT_NAME \
-    actor_rollout_ref.rollout.micro_batch_size=64 \
+    actor_rollout_ref.rollout.micro_batch_size=2 \
     actor_rollout_ref.rollout.unnorm_key=$DATASET_NAME \
     actor_rollout_ref.rollout.model_family=internvl_chat \
     actor_rollout_ref.rollout.task_suite_name=$DATASET_NAME \
@@ -69,11 +73,11 @@ HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=4,5,6,7 python -m verl.trainer.main_ppo 
     actor_rollout_ref.rollout.pretrained_checkpoint=$SFT_MODEL_PATH \
     actor_rollout_ref.rollout.center_crop=True \
     actor_rollout_ref.rollout.max_prompt_length=700 \
-    actor_rollout_ref.rollout.log_prob_micro_batch_size=32 \
+    actor_rollout_ref.rollout.log_prob_micro_batch_size=4 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.name=hf \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.9 \
-    actor_rollout_ref.ref.log_prob_micro_batch_size=32 \
+    actor_rollout_ref.ref.log_prob_micro_batch_size=4 \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
     algorithm.kl_ctrl.kl_coef=0.00 \
     trainer.logger=['console','wandb'] \
@@ -83,7 +87,7 @@ HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=4,5,6,7 python -m verl.trainer.main_ppo 
     trainer.n_gpus_per_node=$NUM_GPUS \
     trainer.nnodes=$NUM_NODES \
     trainer.save_freq=1 \
-    trainer.test_freq=4 \
+    trainer.test_freq=1 \
     trainer.total_epochs=100 \
     trainer.val_only=False \
     algorithm.adv_estimator=grpo \

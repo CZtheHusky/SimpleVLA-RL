@@ -63,16 +63,15 @@ class RobActorRolloutRefWorker(Worker):
     or a hybrid engine based on the config.rollout
     """
 
-    def __init__(self, config: DictConfig, role: str):
+    def __init__(self, config: DictConfig, role: str, dt_flag: str=None):
         super().__init__()
         self.config = config
         import torch.distributed
         if not torch.distributed.is_initialized():
             torch.distributed.init_process_group(backend="nccl")
-        # self.logger = LocalLogger(log_name="RobActorRolloutRefWorker",)
         # build device mesh
         world_size = torch.distributed.get_world_size()
-        # self.logger.log(f"world size: {world_size} rank: {self._rank}")
+        self.logger = LocalLogger(log_name="RobActorRolloutRefWorker", world_size=world_size, rank=self._rank)
         # try:
             # rank = torch.distributed.get_rank()
             # self.logger.log(f"torch rank: {rank}")
@@ -86,7 +85,7 @@ class RobActorRolloutRefWorker(Worker):
         self._is_actor = self.role in ['actor', 'actor_rollout', 'actor_rollout_ref']
         self._is_rollout = self.role in ['rollout', 'actor_rollout', 'actor_rollout_ref']
         self._is_ref = self.role in ['ref', 'actor_rollout_ref']
-
+        self.dt_flag = dt_flag
         # normalize config
         if self._is_actor:
             self.config.actor.ppo_mini_batch_size //= world_size
@@ -266,7 +265,7 @@ class RobActorRolloutRefWorker(Worker):
         if self.config.rollout.name == 'hf':
             from verl.workers.rollout import RobHFRollout
             from verl.workers.hybrid_engine import BaseShardingManager
-            rollout = RobHFRollout(module=self.actor_module, config=self.config.rollout)
+            rollout = RobHFRollout(module=self.actor_module, config=self.config.rollout, dt_flag=self.dt_flag, logger=self.logger)
             sharding_manager = BaseShardingManager()
             # TODO: a sharding manager that do nothing?
         elif self.config.rollout.name == 'vllm':
@@ -318,7 +317,9 @@ class RobActorRolloutRefWorker(Worker):
             OmegaConf.set_struct(self.config.actor, True)
             self.actor = RobDataParallelPPOActor(config=self.config.actor,
                                               actor_module=self.actor_module,
-                                              actor_optimizer=self.actor_optimizer)
+                                              actor_optimizer=self.actor_optimizer,
+                                              logger=self.logger
+                                              )
 
         if self._is_rollout:
             self.rollout, self.sharding_manager = self._build_rollout()
@@ -330,7 +331,9 @@ class RobActorRolloutRefWorker(Worker):
                                                                trust_remote_code=True)[0] #self.config.model.get('trust_remote_code', False)
                                                                    
             OmegaConf.set_struct(self.config.ref, True)
-            self.ref_policy = RobDataParallelPPOActor(config=self.config.ref, actor_module=self.ref_module)
+            self.ref_policy = RobDataParallelPPOActor(config=self.config.ref, actor_module=self.ref_module,
+                                              logger=self.logger
+                                              )
 
         torch.cuda.synchronize()
         torch.distributed.barrier()
@@ -410,7 +413,7 @@ class RobActorRolloutRefWorker(Worker):
 
         # with Timer(name=f'gen seq end ,  old log will begin', text="{name}: {seconds:.1f} seconds") as timer:    
         #     print("gen seq end ,  old log will begin")
-        
+        self.logger.log(f"log_prob_micro_batch_size: {self.config.rollout.log_prob_micro_batch_size}")
         if self._is_actor and recompute_log_prob:
             # we should always recompute old_log_probs when it is HybridEngine
             

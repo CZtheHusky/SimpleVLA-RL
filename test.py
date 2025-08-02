@@ -32,12 +32,6 @@ tokenizer = AutoTokenizer.from_pretrained(local_path, trust_remote_code=True, us
 # # processor = AutoProcessor.from_pretrained(local_path, trust_remote_code=True)
 # print(img_context_token_id)
 
-
-
-
-
-
-
 import json
 
 def read_jsonl_standard(file_path: str) -> list:

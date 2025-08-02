@@ -133,9 +133,10 @@ class GRUTOPIA_Dataset(Dataset):
         return len(self.dataframe)
     
 class MANISKILL_Dataset(Dataset):
-    def __init__(self, train_val="train", num_envs_seeds=16, task_ids: List[str] = ["StackCube-v1"]):
+    def __init__(self, train_val="train", num_envs_seeds=16, task_ids: List[str] = ["StackCube-v1"], len_dataset=520):
         dataframes = []
-        env_seeds = np.arange(num_envs_seeds) if train_val == "train" else np.arange(num_envs_seeds, num_envs_seeds + max(1, (num_envs_seeds // 20)))
+        env_seeds = np.arange(num_envs_seeds) if train_val == "train" else np.arange(num_envs_seeds, num_envs_seeds + num_envs_seeds)
+        self.len_dataset = len_dataset if train_val == 'train' else len_dataset // 2
         task_descriptions = {
             "StackCube-v1": "stack the red cube on top of the green one",
         }
@@ -151,10 +152,11 @@ class MANISKILL_Dataset(Dataset):
         self.dataframe = dataframes
 
     def __getitem__(self, index):
-        return self.dataframe[index]
+        random_index = np.random.randint(len(self.dataframe))
+        return self.dataframe[random_index]
 
     def __len__(self):
-        return len(self.dataframe)
+        return self.len_dataset
             
 
 class BufferedDataLoader:

@@ -35,7 +35,7 @@ from verl.single_controller.ray.base import create_colocated_worker_cls
 from verl import DataProto
 from verl.trainer.ppo import core_algos
 from verl.utils.dataset.rob_dataset import BufferedDataLoader
-
+import datetime
 WorkerType = Type[Worker]
 
 
@@ -286,7 +286,7 @@ class RayTrainer(object):
                 raise NotImplementedError
         else:
             self.kl_ctrl = core_algos.FixedKLController(kl_coef=0.)
-
+        self.dt_flag = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         self._create_dataloader()
 
     def _create_dataloader(self):   # next fix
@@ -309,8 +309,8 @@ class RayTrainer(object):
             self.val_datatset = GRUTOPIA_Dataset('valid')
         elif self.config.data.task_suite_name == "maniskill":
             from verl.utils.dataset.rob_dataset import MANISKILL_Dataset
-            self.train_dataset = MANISKILL_Dataset('train', num_envs_seeds=self.config.data.num_envs_seeds, task_ids= self.config.data.task_ids)
-            self.val_dataset = MANISKILL_Dataset('valid', num_envs_seeds=self.config.data.num_envs_seeds, task_ids= self.config.data.task_ids)
+            self.train_dataset = MANISKILL_Dataset('train', **self.config.data.rob_dataset_kwargs)
+            self.val_dataset = MANISKILL_Dataset('valid', **self.config.data.rob_dataset_kwargs)
             self.batch_keys = ['env_unique_id']
             self.non_tensor_batch_keys = {"task_suite_name", "env_id", "task_instruction"}
         else:
@@ -355,8 +355,7 @@ class RayTrainer(object):
                 'validate': True,
                 "global_steps":global_steps
             }
-            for key in self.batch_keys:
-                print(test_batch.batch[key])
+
             test_output_gen_batch = self.actor_rollout_wg.generate_sequences(test_batch)
             print('validation generation end')
 
@@ -408,7 +407,8 @@ class RayTrainer(object):
             resource_pool = self.resource_pool_manager.get_resource_pool(Role.ActorRollout)
             actor_rollout_cls = RayClassWithInitArgs(cls=self.role_worker_mapping[Role.ActorRollout],
                                                      config=self.config.actor_rollout_ref,
-                                                     role='actor_rollout')
+                                                     role='actor_rollout',
+                                                     dt_flag=self.dt_flag)
             self.resource_pool_to_cls[resource_pool]['actor_rollout'] = actor_rollout_cls
         else:
             raise NotImplementedError
@@ -416,7 +416,8 @@ class RayTrainer(object):
         # create critic
         if self.config.algorithm.adv_estimator == 'gae':
             resource_pool = self.resource_pool_manager.get_resource_pool(Role.Critic)
-            critic_cls = RayClassWithInitArgs(cls=self.role_worker_mapping[Role.Critic], config=self.config.critic)
+            critic_cls = RayClassWithInitArgs(cls=self.role_worker_mapping[Role.Critic], config=self.config.critic,
+                                                     dt_flag=self.dt_flag)
             self.resource_pool_to_cls[resource_pool]['critic'] = critic_cls
             self.use_critic = True
         elif self.config.algorithm.adv_estimator in ['rloo']:
@@ -433,14 +434,16 @@ class RayTrainer(object):
             resource_pool = self.resource_pool_manager.get_resource_pool(Role.RefPolicy)
             ref_policy_cls = RayClassWithInitArgs(self.role_worker_mapping[Role.RefPolicy],
                                                   config=self.config.actor_rollout_ref,
-                                                  role='ref')
+                                                  role='ref',
+                                                  dt_flag=self.dt_flag)
             self.resource_pool_to_cls[resource_pool]['ref'] = ref_policy_cls
 
         # create a reward model if reward_fn is None
         if self.use_rm:
             # we create a RM here
             resource_pool = self.resource_pool_manager.get_resource_pool(Role.RewardModel)
-            rm_cls = RayClassWithInitArgs(self.role_worker_mapping[Role.RewardModel], config=self.config.reward_model)
+            rm_cls = RayClassWithInitArgs(self.role_worker_mapping[Role.RewardModel], config=self.config.reward_model,
+                                                     dt_flag=self.dt_flag)
             self.resource_pool_to_cls[resource_pool]['rm'] = rm_cls
 
         # initialize WorkerGroup

@@ -197,6 +197,7 @@ def action_decode(prompts, string_response, task_suite: TaskSuite):
             else:
                 action_extracted[:-1] = action_extracted[:-1] / 1000
             actions.append(action_extracted)
+        actions = np.array(actions)
     return actions
         
 
@@ -248,7 +249,7 @@ def assemble_action_vla(
     return action
 
 
-def obs_process(inputs: List, task_descriptions, task_suite: TaskSuite, **kwargs):
+def obs_process(inputs: List, task_descriptions, task_suite: TaskSuite, done_mask=None, **kwargs):
     if task_suite == TaskSuite.GRUTOPIA:
         num_patches_list = []
         pixel_values = []
@@ -316,9 +317,11 @@ def obs_process(inputs: List, task_descriptions, task_suite: TaskSuite, **kwargs
         qposes = []
         num_envs = inputs["agent"]["qpos"].shape[0]
         for env_id in range(num_envs):
-            qpos = inputs["agent"]["qpos"][env_id].cpu().numpy()
+            if done_mask[env_id]:
+                continue
+            qpos = inputs["agent"]["qpos"][env_id]
             qposes.append(qpos)
-            camera = inputs['sensor_data']["base_camera"]["rgb"][env_id].cpu().numpy()
+            camera = inputs['sensor_data']["base_camera"]["rgb"][env_id]
             rescaled_qpos = np.round(qpos * 1000).astype(np.int32)
             query = f"The current position state of the robotic arm's end gripper is as follows: {{Joint_0: {rescaled_qpos[0]}, Joint_1: {rescaled_qpos[1]}, Joint_2: {rescaled_qpos[2]}, Joint_3: {rescaled_qpos[3]}, Joint_4: {rescaled_qpos[4]}, Joint_5: {rescaled_qpos[5]}, Joint_6: {rescaled_qpos[6]}, Joint_7: {rescaled_qpos[7]}, Joint_8: {rescaled_qpos[8]}}}. What action should the robot take to get better completion of instruction: {instructions[env_id]}?"
             pixel_0 = process_image_internvl(camera)
@@ -328,7 +331,7 @@ def obs_process(inputs: List, task_descriptions, task_suite: TaskSuite, **kwargs
             pixels.append(pixel_0)
             if dual_cam:
                 query = "<image><image>" + query
-                hand_camera = inputs['sensor_data']["hand_camera"]["rgb"][env_id].cpu().numpy()
+                hand_camera = inputs['sensor_data']["hand_camera"]["rgb"][env_id]
                 pixel_1 = process_image_internvl(hand_camera)
                 patch_list.append(pixel_1.size(0))
                 pixels.append(pixel_1)

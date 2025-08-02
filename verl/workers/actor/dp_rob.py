@@ -36,6 +36,12 @@ from verl.utils.logger.local_logger import LocalLogger
 
 __all__ = ['RobDataParallelPPOActor']
 
+class DummyLogger:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def log(self, *args, **kwargs):
+        pass
 
 class RobDataParallelPPOActor(BasePPOActor):
 
@@ -44,6 +50,7 @@ class RobDataParallelPPOActor(BasePPOActor):
         config,
         actor_module: nn.Module,
         actor_optimizer: torch.optim.Optimizer = None,
+        logger=None,
     ):
         """When optimizer is None, it is Reference Policy"""
         super().__init__(config)
@@ -55,7 +62,7 @@ class RobDataParallelPPOActor(BasePPOActor):
         self.ulysses_sequence_parallel_size = self.config.ulysses_sequence_parallel_size
         self.use_ulysses_sp = False #self.ulysses_sequence_parallel_size > 1
         self.compute_entropy_from_logits = torch.compile(verl_F.entropy_from_logits, dynamic=True)
-        # self.logger = LocalLogger(log_dir="logs", log_name="RobDataParallelPPOActor")  # Initialize logger
+        self.logger = logger
        
     # def process_tensor(self, tensor, pad_id):
     #     mask = tensor != pad_id
@@ -474,9 +481,12 @@ class RobDataParallelPPOActor(BasePPOActor):
 
         log_probs_lst = []
         for micro_batch in micro_batches:
+            # log current gpu memory
+            self.logger.log(f"Current GPU memory usage: {torch.cuda.memory_allocated() / (1024 ** 3):.2f} GB")
             with torch.no_grad():
                 _, log_probs = self._forward_micro_batch(micro_batch, temperature=temperature)
             log_probs_lst.append(log_probs)
+            self.logger.log(f"Processed micro_batch with size {micro_batch.size()} and log_probs shape {log_probs.shape}, len of log_probs_lst: {len(log_probs_lst)}")
         log_probs = torch.concat(log_probs_lst, dim=0)
 
         if use_dynamic_bsz:

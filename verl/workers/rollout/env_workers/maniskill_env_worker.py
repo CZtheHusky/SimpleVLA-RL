@@ -7,18 +7,25 @@ from verl.workers.rollout.env_workers.utils import action_to_str, write_instruct
 
 
 class EnvActor:
-    def __init__(self):
+    def __init__(self, pid=0):
         self.env = None
         self.env_ids = []
         self.env_unique_ids = []
         self.num_envs = 0
+        self.pid = pid
+
+    def process_obs(self, obs):
+        obs['agent']['qpos'] = obs['agent']['qpos'].cpu().numpy()
+        obs['sensor_data']["base_camera"]["rgb"] = obs['sensor_data']["base_camera"]["rgb"].cpu().numpy()
+        obs['sensor_data']["hand_camera"]["rgb"] = obs['sensor_data']["hand_camera"]["rgb"].cpu().numpy()
+        return obs
     
     def init_venv(self, env_ids, env_unique_ids, task_instructions, is_valid, global_steps, max_steps):
         assert len(env_ids) > 1, "Num venvs must be greater than 1 to avoid env re-initialization PHYSIX Errors."
         self.finished = np.zeros(len(env_unique_ids), dtype=bool)
         self.finish_step = np.zeros(len(env_unique_ids), dtype=int)
         # task_file_names = [f"{env_ids[venv_index]}_task_{env_unique_ids[venv_index]}_uid_{global_steps}" for venv_index in range(len(env_unique_ids))]
-        task_file_names = {venv_index: f"{env_ids[venv_index].split('-')[0]}_seed_{env_unique_ids[venv_index]}_uid_{global_steps}" for venv_index in range(len(env_unique_ids))}
+        task_file_names = {venv_index: f"{global_steps}_{self.pid}_{env_ids[venv_index].split('-')[0]}_{env_unique_ids[venv_index]}" for venv_index in range(len(env_unique_ids))}
         try:
             if self.env is not None and (self.env_ids[0] != env_ids[0] or len(self.env_unique_ids) != len(env_unique_ids)):
                 # reinit the env with new env_ids and env_unique_ids
@@ -47,6 +54,7 @@ class EnvActor:
         self.env_unique_ids = env_unique_ids        
         self.is_valid = is_valid
         self.num_envs = len(env_unique_ids)
+        obs = self.process_obs(obs)
         self.last_obs = obs
         return {
             'obs': obs,
@@ -62,12 +70,13 @@ class EnvActor:
             if isinstance(action, list):
                 action = np.array(action)
             obs, _, terminated, _, _ = self.env.step(action)
+            obs = self.process_obs(obs)
             terminated = terminated.cpu().numpy()
             self.finished = np.logical_or(self.finished, terminated)
             self.finish_step += 1
             valid_images = None
             if self.is_valid:
-                valid_images = np.concatenate([self.last_obs['sensor_data']["base_camera"]["rgb"].cpu().numpy(), self.last_obs['sensor_data']["hand_camera"]["rgb"].cpu().numpy()], axis=2)
+                valid_images = np.concatenate([self.last_obs['sensor_data']["base_camera"]["rgb"], self.last_obs['sensor_data']["hand_camera"]["rgb"]], axis=2)
                 images = []
                 for env_index in range(self.num_envs):
                     local_img = valid_images[env_index]

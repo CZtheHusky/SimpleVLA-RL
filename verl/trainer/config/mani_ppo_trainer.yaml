@@ -1,9 +1,11 @@
 data:
+  rob_dataset_kwargs:
+    num_envs_seeds: 1024
+    len_dataset: 480
+    task_ids: 
+      - "StackCube-v1"
   tokenizer: null
   task_suite_name: maniskill
-  num_envs_seeds: 1024  # number of envs scenes per task
-  task_ids: 
-    - "StackCube-v1"
   filter_warmup: False
   prompt_key: prompt
   system_prompt: null

@@ -104,16 +104,20 @@ import hydra
 @hydra.main(config_path='config', config_name='mani_ppo_trainer', version_base=None)
 def main(config):
     ray_tmp_dir = "/mnt/nfs_rt/caozhe/ray_tmp"
+    api_key = os.environ.get("WANDB_API_KEY")
+    print("WANDB_API_KEY in this proc:", os.environ.get("WANDB_API_KEY"))
     if not ray.is_initialized():
         # this is for local ray cluster
         if os.path.isfile(str(config.trainer.runtime_env)):
             with open(str(config.trainer.runtime_env), 'r') as f:
                 runtime_env = json.load(f)
+            runtime_env['env_vars'].update({"WANDB_API_KEY": api_key})
             runtime_env['env_vars'].update({"RAY_DEBUG": "1"})
             print(runtime_env)
             ray.init(runtime_env=runtime_env, _temp_dir=ray_tmp_dir)
         else:
             runtime_env = {'env_vars': {'TOKENIZERS_PARALLELISM': 'true', 'NCCL_DEBUG': 'WARN'}}
+            runtime_env['env_vars'].update({"WANDB_API_KEY": api_key})
             runtime_env['env_vars'].update({"RAY_DEBUG": "1"})
             print(runtime_env)
             ray.init(runtime_env=runtime_env, _temp_dir=ray_tmp_dir)

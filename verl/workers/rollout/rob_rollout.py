@@ -76,6 +76,8 @@ class RobHFRollout(BaseRollout):
         self.module = module
         if isinstance(self.module, FSDP):
             self.early_stop = True  # early stop for dp rollout
+        else:
+            self.early_stop = False
         # self.rank = int(os.environ.get("RANK", 0))
         self.processor = AutoProcessor.from_pretrained(config.pretrained_checkpoint, trust_remote_code=True)
         if config.vla == "internvl_chat":

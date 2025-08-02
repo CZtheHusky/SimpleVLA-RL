@@ -25,7 +25,7 @@ NUM_GPUS=4
 NUM_NODES=1 
 ALIGN_PATH="/home/caozhe/workspace/SimpleVLA-RL/align.json"
 
-HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=0,1,2,3 python -m verl.trainer.main_ppo \
+HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=4,5,6,7 python -m verl.trainer.main_ppo \
     data.task_suite_name=$DATASET_NAME \
     data.n_samples=8 \
     data.filter_accuracy=False \

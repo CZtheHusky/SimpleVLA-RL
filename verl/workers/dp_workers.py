@@ -31,13 +31,13 @@ from verl import DataProto
 from verl.utils.model import compute_position_id_with_mask
 from verl.utils.fs import copy_local_path_from_hdfs
 from verl.utils.import_utils import import_external_libs
-from verl.utils.debug import log_gpu_memory_usage
+from verl.utils.debug import log_gpu_memory_usage, gpu_memory
 import verl.utils.hdfs_io as hdfs_io
 from verl.utils import hf_tokenizer
 from ..trainer.ppo import core_algos
 from verl.utils.py_functional import append_to_dict
 from codetiming import Timer
-from verl.utils.logger.local_logger import LocalLogger
+from verl.utils.logger.local_logger import LocalLogger, DummyLogger
 from verl.utils.model import print_model_size, update_model_config
 from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig, AutoImageProcessor, AutoModelForVision2Seq, AutoProcessor, AutoModelForCausalLM
 from torch import optim
@@ -71,7 +71,7 @@ class RobActorRolloutRefWorker(Worker):
             torch.distributed.init_process_group(backend="nccl")
         # build device mesh
         world_size = torch.distributed.get_world_size()
-        self.logger = LocalLogger(log_name="RobActorRolloutRefWorker", world_size=world_size, rank=self._rank)
+        self.logger = LocalLogger(log_name=f"{dt_flag}/RobActorRolloutRefWorker", world_size=world_size, rank=self._rank)
         # try:
             # rank = torch.distributed.get_rank()
             # self.logger.log(f"torch rank: {rank}")
@@ -346,11 +346,12 @@ class RobActorRolloutRefWorker(Worker):
         #data.batch = data.batch.cuda()
 
         log_gpu_memory_usage('Before update policy', logger=logger)
+        self.logger.log(f"before update policy, {gpu_memory()}")
         metrics = self.actor.update_policy(data=data)
         self.actor_lr_scheduler.step()
         lr = self.actor_lr_scheduler.get_last_lr()[0]
         metrics['actor/lr(1e-4)'] = lr * 1e4
-
+        self.logger.log(f"after update policy, {gpu_memory()}")
         log_gpu_memory_usage('After update policy', logger=logger)
 
         # TODO: here, we should return all metrics
@@ -405,7 +406,9 @@ class RobActorRolloutRefWorker(Worker):
         with self.sharding_manager:
             log_gpu_memory_usage('After entering sharding manager', logger=logger)    
             prompts = self.sharding_manager.preprocess_data(prompts)
+            self.logger.log(f"Actor generate_sequences, {gpu_memory()}")
             output = self.rollout.generate_sequences(prompts=prompts)
+            self.logger.log(f"Actor generate_sequences done, {gpu_memory()}")
             log_gpu_memory_usage('After rollout generation', logger=logger)
             # shape: BS * MAX_SEQ_LEN
             output = self.sharding_manager.postprocess_data(output)
@@ -413,7 +416,7 @@ class RobActorRolloutRefWorker(Worker):
 
         # with Timer(name=f'gen seq end ,  old log will begin', text="{name}: {seconds:.1f} seconds") as timer:    
         #     print("gen seq end ,  old log will begin")
-        self.logger.log(f"log_prob_micro_batch_size: {self.config.rollout.log_prob_micro_batch_size}")
+        self.logger.log(f"Actor before compute log_prob: {gpu_memory()}, log_prob_micro_batch_size: {self.config.rollout.log_prob_micro_batch_size}")
         if self._is_actor and recompute_log_prob:
             # we should always recompute old_log_probs when it is HybridEngine
             
@@ -424,13 +427,18 @@ class RobActorRolloutRefWorker(Worker):
             output.meta_info['pad_token_id'] = self.tokenizer.pad_token_id
             old_log_probs = self.actor.compute_log_prob(data=output)
             output.batch['old_log_probs'] = old_log_probs
-
+        self.logger.log(f"Actor log prob computed, shape; {old_log_probs.shape} {gpu_memory()}")
         output = output.to('cpu')
+        self.logger.log(f"Actor move to cpu: {gpu_memory()}")
 
         # clear kv cache
+        self.logger.log(f"Actor before synchronize and barrier {gpu_memory()}")
         torch.cuda.synchronize()
+        self.logger.log(f"Actor after synchronize {gpu_memory()}")
         torch.distributed.barrier()
+        self.logger.log(f"Actor after barrier {gpu_memory()}")
         torch.cuda.empty_cache()
+        self.logger.log(f"Actor after empty cache {gpu_memory()}")
         log_gpu_memory_usage('After recompute log prob', logger=logger)
         return output
 

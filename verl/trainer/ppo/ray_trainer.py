@@ -28,6 +28,7 @@ import uuid
 from omegaconf import OmegaConf, open_dict
 import numpy as np
 from codetiming import Timer
+from verl.utils.debug import gpu_memory
 
 from verl.single_controller.base import Worker
 from verl.single_controller.ray import RayResourcePool, RayWorkerGroup, RayClassWithInitArgs
@@ -36,6 +37,8 @@ from verl import DataProto
 from verl.trainer.ppo import core_algos
 from verl.utils.dataset.rob_dataset import BufferedDataLoader
 import datetime
+from verl.utils.logger.local_logger import LocalLogger, DummyLogger
+
 WorkerType = Type[Worker]
 
 
@@ -287,6 +290,7 @@ class RayTrainer(object):
         else:
             self.kl_ctrl = core_algos.FixedKLController(kl_coef=0.)
         self.dt_flag = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        self.logger = LocalLogger(log_name=f"{self.dt_flag}/RayTrainer")
         self._create_dataloader()
 
     def _create_dataloader(self):   # next fix
@@ -355,9 +359,9 @@ class RayTrainer(object):
                 'validate': True,
                 "global_steps":global_steps
             }
-
+            self.logger.log(f"validate, before generate_sequences, {gpu_memory()}")
             test_output_gen_batch = self.actor_rollout_wg.generate_sequences(test_batch)
-            print('validation generation end')
+            self.logger.log(f"validate, after generate_sequences, {gpu_memory()}")
 
             test_batch = test_batch.union(test_output_gen_batch)
 
@@ -550,12 +554,15 @@ class RayTrainer(object):
                             'n_samples': n_samples,
                             'pad_token_id': self.tokenizer.pad_token_id,
                         }
-                        
+                        self.logger.log(f"Trainer before fit generate_sequences, {gpu_memory()}")
                         gen_batch_output = self.actor_rollout_wg.generate_sequences(prompts=gen_batch)
+                        self.logger.log(f"Trainer after fit generate_sequences, {gpu_memory()}")
                         
                         roll_batch = DataProto.concat(batch_lst)
                         #roll_batch.pop(batch_keys=['input_ids', 'attention_mask', 'position_ids'])
                         roll_batch = roll_batch.union(gen_batch_output)
+                        torch.cuda.empty_cache()
+                        self.logger.log(f"Trainer after empty cache, {gpu_memory()}")
 
                     metrics['timing/gen'] += timer.last
                     

@@ -11,7 +11,10 @@ class ContextAdapter(logging.LoggerAdapter):
         return msg, kwargs
 
 class DummyLogger:
-    def info(self, *args, **kwargs): pass
+    def __init__(self, *args, **kwargs): pass
+
+    def log(self, *args, **kwargs): pass
+
     def warning(self, *args, **kwargs): pass
 
 class LocalLogger:

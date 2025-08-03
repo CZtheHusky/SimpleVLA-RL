@@ -17,23 +17,23 @@ CKPT_PATH="./ckpts"
 # DATASET_NAME can be libero_10 (libero_Long), libero_90, libero_spatial, libero_object, libero_goal
 DATASET_NAME="maniskill"
 VLA_NAME="internvl_chat"
-NUM_GPUS=8
+NUM_GPUS=4
 # If you want to use 2*8 GPU to RL. Set NUM_NODES=2
 NUM_NODES=1 
 ALIGN_PATH="align.json"
 
-HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python -m verl.trainer.main_ppo \
+HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=4,5,6,7 python -m verl.trainer.main_ppo \
     data.task_suite_name=$DATASET_NAME \
     data.n_samples=8 \
     data.filter_accuracy=False \
     data.accuracy_lower_bound=0.1 \
     data.accuracy_upper_bound=0.9 \
     data.oversample_factor=1 \
-    data.train_batch_size=16 \
+    data.train_batch_size=32 \
     data.val_batch_size=120 \
     data.rob_dataset_kwargs.num_envs_seeds=4096  \
     data.rob_dataset_kwargs.len_dataset=240 \
-    data.max_prompt_length=700 \
+    data.max_prompt_length=690 \
     data.max_response_length=16 \
     actor_rollout_ref.actor.strategy=dp \
     critic.strategy=dp  \
@@ -47,14 +47,11 @@ HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python -m verl.trainer.m
     actor_rollout_ref.actor.ppo_mini_batch_size=128 \
     actor_rollout_ref.actor.ppo_micro_batch_size=$NUM_GPUS \
     actor_rollout_ref.actor.use_dynamic_bsz=False \
-    actor_rollout_ref.actor.fsdp_config.param_offload=False \
-    actor_rollout_ref.actor.fsdp_config.grad_offload=True \
-    actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
     actor_rollout_ref.actor.grad_clip=1 \
     actor_rollout_ref.actor.clip_ratio_high=0.28 \
     actor_rollout_ref.actor.clip_ratio_low=0.2 \
     actor_rollout_ref.actor.num_images_in_input=2 \
-    actor_rollout_ref.actor.traj_mini_batch_size=16 \
+    actor_rollout_ref.actor.traj_mini_batch_size=10 \
     actor_rollout_ref.model.enable_gradient_checkpointing=False \
     actor_rollout_ref.model.use_remove_padding=False \
     actor_rollout_ref.actor.entropy_coeff=0. \
@@ -69,12 +66,12 @@ HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python -m verl.trainer.m
     actor_rollout_ref.rollout.num_steps_wait=10 \
     actor_rollout_ref.rollout.pretrained_checkpoint=$SFT_MODEL_PATH \
     actor_rollout_ref.rollout.center_crop=True \
-    actor_rollout_ref.rollout.max_prompt_length=700 \
-    actor_rollout_ref.rollout.log_prob_micro_batch_size=8 \
+    actor_rollout_ref.rollout.max_prompt_length=690 \
+    actor_rollout_ref.rollout.log_prob_micro_batch_size=32 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.name=hf \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.9 \
-    actor_rollout_ref.ref.log_prob_micro_batch_size=8 \
+    actor_rollout_ref.ref.log_prob_micro_batch_size=32 \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
     algorithm.kl_ctrl.kl_coef=0.00 \
     trainer.logger=['console','wandb'] \
@@ -83,8 +80,8 @@ HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python -m verl.trainer.m
     trainer.default_local_dir=$CKPT_PATH/$PROJECT_NAME/$EXPERIMENT_NAME \
     trainer.n_gpus_per_node=$NUM_GPUS \
     trainer.nnodes=$NUM_NODES \
-    trainer.save_freq=1 \
-    trainer.test_freq=1 \
+    trainer.save_freq=25 \
+    trainer.test_freq=4 \
     trainer.total_epochs=100 \
     trainer.val_only=False \
     algorithm.adv_estimator=grpo \

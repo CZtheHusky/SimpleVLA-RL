@@ -23,6 +23,7 @@ from tensordict import TensorDict
 from torch import nn
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.nn.utils.rnn import pad_sequence
+from verl.utils.debug import gpu_memory
 
 from verl import DataProto
 from verl.utils.torch_functional import get_eos_mask
@@ -52,6 +53,7 @@ from verl.utils.env_utils.utils import obs_process, extract_action_vector, assem
 from verl.workers.rollout.env_workers.libero_env_worker import center_crop_image
 import ray
 import os
+
 
 
 
@@ -97,7 +99,7 @@ class RobHFRollout(BaseRollout):
                 self.process_kwargs['dual_cam'] = False
             self.env_type = ENV_TYPE.VENV
             self.max_steps = {
-                "StackCube-v1": 200,
+                "StackCube-v1": 150,
             }
             from verl.workers.rollout.env_workers.maniskill_env_worker import env_worker, EnvActor
             self.env_actor = EnvActor(pid=os.getpid())
@@ -154,8 +156,12 @@ class RobHFRollout(BaseRollout):
         num_chunks = max(batch_size // micro_batch_size, 1)
         # assert batch_size % micro_batch_size == 0, f"Batch size {batch_size} is not divisible by micro batch size {micro_batch_size}."    # avoid changing the num of venvs
         batch_prompts = prompts.chunk(chunks=num_chunks)
+        self.logger.log(f"before generate_sequences, {gpu_memory()}")
         output = [self._generate_minibatch(p) for p in batch_prompts]
         output = DataProto.concat(output)
+        self.logger.log(f"after generate_sequences, {gpu_memory()}")
+        torch.cuda.empty_cache()
+        self.logger.log(f"after empty cache, {gpu_memory()}")
         # print("Batch generation time:", time.time() - start_time)
         return output
     
@@ -238,6 +244,7 @@ class RobHFRollout(BaseRollout):
             return step < max_step
                            
     def _venv_generate_minibatch(self, prompts):
+        self.logger.log(f"start _venv_generate_minibatch, {gpu_memory()}")
         self.module.eval()
         meta_info = prompts.meta_info
         n_samples = meta_info.get('n_samples', 1)
@@ -251,6 +258,7 @@ class RobHFRollout(BaseRollout):
         # print(infos_print)
         max_steps = self.max_steps[env_id[0]]
         batch_size = env_unique_id.size(0)    # Num of grpo samples
+        self.logger.log(f"before init venv, {gpu_memory()}")
         init_data = self.env_actor.init_venv(
             env_id,
             env_unique_id.cpu().numpy().squeeze(1),
@@ -259,6 +267,7 @@ class RobHFRollout(BaseRollout):
             global_steps,
             max_steps
         )
+        self.logger.log(f"after init venv, {gpu_memory()}")
         task_records = []
         valid_video = defaultdict(list)
         task_instructions = init_data["task_instructions"]
@@ -281,7 +290,9 @@ class RobHFRollout(BaseRollout):
             # print(f"step: {step} processing input")
             vla_input = self.process_input(current_inputs, current_task_instructions, is_already_done)
             vla_input.update(meta_info)
+            # self.logger.log(f"before _generate_one_step, {gpu_memory()}")
             tmp_vla_output = self._generate_one_step(vla_input, step)
+            # self.logger.log(f"after _generate_one_step, {gpu_memory()}")
             tmp_vec_action, tmp_string_response = tmp_vla_output["action"]
             if vla_output is not None:
                 mask = ~is_already_done
@@ -316,7 +327,6 @@ class RobHFRollout(BaseRollout):
                         valid_video[venv_index].append(output['valid_images'][venv_index])
             inputs = output['obs']
             step += self.config.action_chunks_len
-        torch.cuda.empty_cache()
         desired_steps = (max_steps + self.config.action_chunks_len - 1) // self.config.action_chunks_len
         current = len(vla_history)
         if current < desired_steps:
@@ -353,13 +363,17 @@ class RobHFRollout(BaseRollout):
         for k in task_records.keys():
             batch[k] = task_records[k]
         del batch['task_file_name']
-        
+        del is_already_done
         batch["complete"] = torch.tensor(batch["complete"], dtype=torch.bool, device=batch['responses'].device)
         batch["finish_step"] = torch.tensor(batch["finish_step"], dtype=torch.int64, device=batch['responses'].device)
         output_batch = TensorDict(
             batch,
             batch_size=batch_size)
-        return DataProto(batch=output_batch)
+        output_batch = DataProto(batch=output_batch)
+        self.logger.log(f"end _venv_generate_minibatch, {gpu_memory()}")
+        torch.cuda.empty_cache()
+        self.logger.log(f"after empty cache, {gpu_memory()}")
+        return output_batch
      
      
     def _generate_minibatch_libero(self, prompts):

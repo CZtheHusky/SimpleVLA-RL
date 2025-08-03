@@ -21,12 +21,12 @@ local_path = "/mnt/nfs_68/caozhe/workspace/vlav-project/maniskill_stack_cubes_du
 torch_dtype = torch.bfloat16
 actor_model_config = AutoConfig.from_pretrained(local_path, trust_remote_code=True)
 
-model = AutoModelForCausalLM.from_pretrained(
-    pretrained_model_name_or_path=local_path,
-    torch_dtype=torch_dtype,
-    config=actor_model_config,
-    trust_remote_code=True,
-).eval().cuda()
+# model = AutoModelForCausalLM.from_pretrained(
+#     pretrained_model_name_or_path=local_path,
+#     torch_dtype=torch_dtype,
+#     config=actor_model_config,
+#     trust_remote_code=True,
+# ).eval().cuda()
 tokenizer = AutoTokenizer.from_pretrained(local_path, trust_remote_code=True, use_fast=False)
 # img_context_token_id = tokenizer.convert_tokens_to_ids('<IMG_CONTEXT>',)
 # # processor = AutoProcessor.from_pretrained(local_path, trust_remote_code=True)
@@ -67,6 +67,22 @@ for data_dict in data:
     num_tokens = len(tokenizer.encode(query))
     print(f"Query: {query}, Num Tokens: {num_tokens}")
     break
+
+current_strings = ['{', ' ', '{ ', '-', '2', '-4', '1', '3', '0', '-2', '3', '40', '}', "{2 -4 1 3 0 -2 -3}", "{2 -4 1 3 0 -2 -3}{2 -4 1 3 0 -2 -3}{2 -4 1 3 0 -2 -3}{2 -4 1 3 0 -2 -3}"]
+
+for st_r in current_strings:
+    tmp_response = st_r
+    token = tokenizer.encode(tmp_response)
+    num_tokens = len(token)
+    print(f"Response: {tmp_response}, Num Tokens: {num_tokens} Token: {token}")
+    # 1) 拆成 token 字符串
+    toks = tokenizer.tokenize(st_r)
+    # 2) 编成 id
+    ids  = tokenizer.convert_tokens_to_ids(toks)
+    print(f"原始字符串：{st_r}")
+    for tok, idx in zip(toks, ids):
+        print(f"  Token: |{tok}|   →   ID: |{idx}|")
+    print()
 tmp_response = "2, 4, 1, 3, 0, -2, 3, 40"
 num_tokens = len(tokenizer.encode(tmp_response))
 print(f"Response: {tmp_response}, Num Tokens: {num_tokens}")
@@ -76,5 +92,14 @@ num_tokens = len(tokenizer.encode(tmp_response))
 print(f"Response: {tmp_response}, Num Tokens: {num_tokens}")
 
 tmp_response = "{2 -4 1 3 0 -2 -3}"
+num_tokens = len(tokenizer.encode(tmp_response))
+print(f"Response: {tmp_response}, Num Tokens: {num_tokens}")
+
+response = ''
+for i in range(3):
+    response += tmp_response
+    print(f"Num Tokens: {len(tokenizer.encode(response))}")
+
+tmp_response = "{2 -4 1 3 0 -2 -3}{2 -4 1 3 0 -2 -3}{2 -4 1 3 0 -2 -3}"
 num_tokens = len(tokenizer.encode(tmp_response))
 print(f"Response: {tmp_response}, Num Tokens: {num_tokens}")

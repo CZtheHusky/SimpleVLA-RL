@@ -25,6 +25,7 @@ from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from verl import DataProto
 from verl.trainer.ppo import core_algos
 from verl.workers.actor import BasePPOActor
+from verl.utils.debug import gpu_memory
 from verl.utils.py_functional import append_to_dict
 from verl.utils.torch_functional import logprobs_from_logits, log_probs_from_logits_all_rmpad
 from verl.utils.seqlen_balancing import rearrange_micro_batches, get_reverse_idx
@@ -32,16 +33,8 @@ import verl.utils.torch_functional as verl_F
 from codetiming import Timer
 from flash_attn.bert_padding import pad_input, unpad_input, rearrange, index_first_axis
 import os
-from verl.utils.logger.local_logger import LocalLogger
 
 __all__ = ['RobDataParallelPPOActor']
-
-class DummyLogger:
-    def __init__(self, *args, **kwargs):
-        pass
-
-    def log(self, *args, **kwargs):
-        pass
 
 class RobDataParallelPPOActor(BasePPOActor):
 
@@ -164,14 +157,13 @@ class RobDataParallelPPOActor(BasePPOActor):
             attention_mask = micro_batch['attention_mask']
             pixel_values = micro_batch["pixel_values"]
             responses = micro_batch["responses"]
-            
-            input_ids = input_ids.contiguous().view((batch_size * traj_len,) + input_ids.shape[2:])
-            attention_mask = attention_mask.contiguous().view((batch_size * traj_len,) + attention_mask.shape[2:])
-            pixel_values = pixel_values.contiguous().view((batch_size * traj_len,) + pixel_values.shape[2:])
-            responses = responses.contiguous().view((batch_size * traj_len,) + responses.shape[2:])
+
+            input_ids = input_ids.reshape((batch_size * traj_len,) + input_ids.shape[2:])
+            attention_mask = attention_mask.reshape((batch_size * traj_len,) + attention_mask.shape[2:])
+            pixel_values = pixel_values.reshape((batch_size * traj_len,) + pixel_values.shape[2:])
+            responses = responses.reshape((batch_size * traj_len,) + responses.shape[2:])
             input_ids_unpad, (cropped_mask, consistent_shape, valid_len, max_start) = self.process_tensor(input_ids, self.pad_token_id)
             attention_mask_unpad, (cropped_mask, consistent_shape, valid_len, max_start) = self.process_tensor(attention_mask, 0)
-            
             if self.config.vla == "openvla-oft":
                 # assert consistent_shape, "Input ids should have consistent shape after removing padding"
                 logits = self.actor_module(input_ids=input_ids_unpad,
@@ -191,14 +183,14 @@ class RobDataParallelPPOActor(BasePPOActor):
                 entropy = verl_F.entropy_from_logits(logits)  # (bsz, response_length)
             
                 assert len(log_probs.shape)==2 and len(entropy.shape)==2 
-                log_probs = log_probs.contiguous().view((batch_size, traj_len*8,7) )
-                entropy = entropy.contiguous().view((batch_size, traj_len*8,7) )
+                log_probs = log_probs.reshape((batch_size, traj_len*8,7) )
+                entropy = entropy.reshape((batch_size, traj_len*8,7) )
 
                 mask = self.generate_traj_mask(micro_batch['finish_step'], traj_len*8)
                 log_probs, entropy = self.apply_mask_with_grad_control(log_probs, entropy, mask)
                 
-                log_probs = log_probs.contiguous().view((batch_size, traj_len*response_length))
-                entropy = entropy.contiguous().view((batch_size, traj_len*response_length)) 
+                log_probs = log_probs.reshape((batch_size, traj_len*response_length))
+                entropy = entropy.reshape((batch_size, traj_len*response_length)) 
                 
             elif self.config.vla == "openvla":
                 # assert consistent_shape, "Input ids should have consistent shape after removing padding"
@@ -215,44 +207,58 @@ class RobDataParallelPPOActor(BasePPOActor):
                 entropy = verl_F.entropy_from_logits(logits)  # (bsz, response_length)
                 #ADD
                 
-                log_probs = log_probs.contiguous().view((batch_size, traj_len,) + log_probs.shape[1:])
-                entropy = entropy.contiguous().view((batch_size, traj_len,) + entropy.shape[1:])
+                log_probs = log_probs.reshape((batch_size, traj_len,) + log_probs.shape[1:])
+                entropy = entropy.reshape((batch_size, traj_len,) + entropy.shape[1:])
 
                 
                 mask = self.generate_traj_mask(micro_batch['finish_step'], traj_len)
                 log_probs, entropy = self.apply_mask_with_grad_control(log_probs, entropy, mask)
                 
-                log_probs = log_probs.contiguous().view((batch_size, traj_len*response_length))
-                entropy = entropy.contiguous().view((batch_size, traj_len*response_length))
+                log_probs = log_probs.reshape((batch_size, traj_len*response_length))
+                entropy = entropy.reshape((batch_size, traj_len*response_length))
+
             elif self.config.vla == "internvl_chat":
-                # if not consistent_shape:
-                    # self.logger.log(f"_forward_micro_batch: warning: input_ids has inconsistent shape after removing padding, valid_len: {valid_len} max_start: {max_start}, this may cause issues in internvl_chat")
-                pixel_values = pixel_values.contiguous().view(-1, *pixel_values.shape[-3:])  # (batch_size * traj_len, C, H, W)
-                output = self.actor_module(
-                    pixel_values=pixel_values,
-                    input_ids=input_ids_unpad,
-                    attention_mask=attention_mask_unpad,
-                    use_cache=False  # prevent model thinks we are generating
-                )
-                # if self.rank == 0: breakpoint()
-                logits = output.logits
-                logits = logits[:, -response_length - 1:-1]  # (bsz, response_length)
-                logits = logits.div(temperature) 
-                
-                log_probs = logprobs_from_logits(logits, responses)
-                entropy = verl_F.entropy_from_logits(logits)  # (bsz, response_length)
-                #ADD
-                log_probs = log_probs.contiguous().view((batch_size, traj_len,) + log_probs.shape[1:])
-                entropy = entropy.contiguous().view((batch_size, traj_len,) + entropy.shape[1:])
-                
+                split_size = 30
+                n_chunks = (traj_len * batch_size + split_size - 1) // split_size
+                # print(input_ids.shape, attention_mask.shape, pixel_values.shape, responses.shape)
+                id_chunks = input_ids_unpad.chunk(n_chunks, dim=0)
+                attn_chunks = attention_mask_unpad.chunk(n_chunks, dim=0)
+                pv_chunks = pixel_values.chunk(n_chunks, dim=0)
+
+                logits_list = []
+                for id_ch, attn_ch, pv_ch in zip(id_chunks, attn_chunks, pv_chunks):
+                    pv_ch = pv_ch.reshape(-1, *pv_ch.shape[-3:])  # Flatten the batch dimension
+                    # print(id_ch.shape, attn_ch.shape, pv_ch.shape)
+                    out = self.actor_module(
+                        pixel_values=pv_ch,
+                        input_ids=id_ch,
+                        attention_mask=attn_ch,
+                        use_cache=False  # pure forward
+                    )
+                    # Extract only the response-length slice and scale
+                    lg = out.logits[:, -response_length - 1:-1].div(temperature)
+                    # print(lg.shape)
+                    logits_list.append(lg)
+
+                # Concatenate all chunks: shape (B*T, response_length)
+                logits_flat = torch.cat(logits_list, dim=0)
+                # print(logits_flat.shape)
+                # Compute log-probs and entropy
+                log_probs = logprobs_from_logits(logits_flat, responses)
+                entropy = verl_F.entropy_from_logits(logits_flat)
+
+                log_probs = log_probs.reshape((batch_size, traj_len,) + log_probs.shape[1:])
+                entropy = entropy.reshape((batch_size, traj_len,) + entropy.shape[1:])
+
                 mask = self.generate_traj_mask(micro_batch['finish_step'], traj_len)
                 log_probs, entropy = self.apply_mask_with_grad_control(log_probs, entropy, mask)
-                
-                log_probs = log_probs.contiguous().view((batch_size, traj_len*response_length))
-                entropy = entropy.contiguous().view((batch_size, traj_len*response_length))
+
+                # Reshape back: (B, T*response_length)
+                log_probs = log_probs.reshape((batch_size, traj_len * response_length))
+                entropy = entropy.reshape((batch_size, traj_len * response_length))
 
             return entropy, log_probs
-    
+
     def _forward_micro_batch_update(self, input_ids, attention_mask, pixel_values, responses, temperature) -> Tuple[torch.Tensor, torch.Tensor]:
        
         
@@ -281,8 +287,8 @@ class RobDataParallelPPOActor(BasePPOActor):
                 log_probs = logprobs_from_logits(logits, responses)
                 entropy = verl_F.entropy_from_logits(logits)  # (bsz, response_length)
                 
-                log_probs = log_probs.contiguous().view((1, -1))
-                entropy = entropy.contiguous().view((1, -1))
+                log_probs = log_probs.reshape((1, -1))
+                entropy = entropy.reshape((1, -1))
                 
                 return entropy, log_probs
             
@@ -305,8 +311,8 @@ class RobDataParallelPPOActor(BasePPOActor):
                 entropy = verl_F.entropy_from_logits(logits)  # (bsz, response_length)
                 
                 
-                log_probs = log_probs.contiguous().view((1, -1))
-                entropy = entropy.contiguous().view((1, -1))
+                log_probs = log_probs.reshape((1, -1))
+                entropy = entropy.reshape((1, -1))
 
                 return entropy, log_probs
             
@@ -316,7 +322,7 @@ class RobDataParallelPPOActor(BasePPOActor):
                 attention_mask_unpad, (cropped_mask, consistent_shape, valid_len, max_start) = self.process_tensor(attention_mask, 0)
                 # if not consistent_shape:
                 #     self.logger.log(f"_forward_micro_batch_update: warning: input_ids has inconsistent shape after removing padding, valid_len: {valid_len} max_start: {max_start}, this may cause issues in internvl_chat")
-                pixel_values = pixel_values.contiguous().view(-1, *pixel_values.shape[-3:])
+                pixel_values = pixel_values.reshape(-1, *pixel_values.shape[-3:])
                 # assert consistent_shape, "Input ids should have consistent shape after removing padding"
                 output = self.actor_module(input_ids=input_ids_unpad,
                                         attention_mask=attention_mask_unpad,
@@ -332,8 +338,8 @@ class RobDataParallelPPOActor(BasePPOActor):
                 entropy = verl_F.entropy_from_logits(logits)  # (bsz, response_length)
                 
                 
-                log_probs = log_probs.contiguous().view((1, -1))
-                entropy = entropy.contiguous().view((1, -1))
+                log_probs = log_probs.reshape((1, -1))
+                entropy = entropy.reshape((1, -1))
 
                 return entropy, log_probs
                 
@@ -356,9 +362,9 @@ class RobDataParallelPPOActor(BasePPOActor):
             attention_mask = micro_batch['attention_mask']
             pixel_values = micro_batch["pixel_values"]
             
-            input_ids = input_ids.contiguous().view((batch_size * traj_len,) + input_ids.shape[2:])
-            attention_mask = attention_mask.contiguous().view((batch_size * traj_len,) + attention_mask.shape[2:])
-            pixel_values = pixel_values.contiguous().view((batch_size * traj_len,) + pixel_values.shape[2:])
+            input_ids = input_ids.reshape((batch_size * traj_len,) + input_ids.shape[2:])
+            attention_mask = attention_mask.reshape((batch_size * traj_len,) + attention_mask.shape[2:])
+            pixel_values = pixel_values.reshape((batch_size * traj_len,) + pixel_values.shape[2:])
             
             
             input_ids_unpad, (cropped_mask, consistent_shape, valid_len, max_start) = self.process_tensor(input_ids, self.pad_token_id)
@@ -380,10 +386,10 @@ class RobDataParallelPPOActor(BasePPOActor):
                 entropy = verl_F.entropy_from_logits(logits)  # (bsz, response_length)
 
                 assert len(entropy.shape)==2 
-                entropy = entropy.contiguous().view((batch_size, traj_len*8,7) )
+                entropy = entropy.reshape((batch_size, traj_len*8,7) )
                 mask = self.generate_traj_mask(micro_batch['finish_step'], traj_len*8)
                 _, entropy = self.apply_mask_with_grad_control(entropy, entropy, mask)
-                entropy = entropy.contiguous().view((batch_size, traj_len*response_length))
+                entropy = entropy.reshape((batch_size, traj_len*response_length))
                 return entropy
             
             elif self.config.vla == "openvla":
@@ -402,34 +408,49 @@ class RobDataParallelPPOActor(BasePPOActor):
                 entropy = verl_F.entropy_from_logits(logits)  # (bsz, response_length)
                 #ADD
 
-                entropy = entropy.contiguous().view((batch_size, traj_len,) + entropy.shape[1:])
+                entropy = entropy.reshape((batch_size, traj_len,) + entropy.shape[1:])
                 mask = self.generate_traj_mask(micro_batch['finish_step'], traj_len)
                 _, entropy = self.apply_mask_with_grad_control(entropy, entropy, mask)
-                entropy = entropy.contiguous().view((batch_size, traj_len*response_length))
+                entropy = entropy.reshape((batch_size, traj_len*response_length))
                 return entropy
             
             elif self.config.vla == "internvl_chat":
                 # if not consistent_shape:
                     # self.logger.log(f"_forward_micro_batch_entropy: warning: input_ids has inconsistent shape after removing padding, valid_len: {valid_len} max_start: {max_start}, this may cause issues in internvl_chat")
-                pixel_values = pixel_values.contiguous().view(-1, *pixel_values.shape[-3:])  # (batch_size * traj_len, C, H, W)
-                output = self.actor_module(input_ids=input_ids_unpad,
-                                        attention_mask=attention_mask_unpad,
-                                        pixel_values=pixel_values,
-                                        use_cache=False)  # prevent model thinks we are generating
-                logits = output.logits
-                #
-                
-                
-                logits = logits[:, -response_length - 1:-1]  # (bsz, response_length)
-                logits = logits.div(temperature) 
-                
-                entropy = verl_F.entropy_from_logits(logits)  # (bsz, response_length)
-                #ADD
+                split_size = 30
+                n_chunks = (traj_len * batch_size + split_size - 1) // split_size
+                # print(input_ids.shape, attention_mask.shape, pixel_values.shape, responses.shape)
+                id_chunks = input_ids_unpad.chunk(n_chunks, dim=0)
+                attn_chunks = attention_mask_unpad.chunk(n_chunks, dim=0)
+                pv_chunks = pixel_values.chunk(n_chunks, dim=0)
 
-                entropy = entropy.contiguous().view((batch_size, traj_len,) + entropy.shape[1:])
+                logits_list = []
+                for id_ch, attn_ch, pv_ch in zip(id_chunks, attn_chunks, pv_chunks):
+                    pv_ch = pv_ch.reshape(-1, *pv_ch.shape[-3:])  # Flatten the batch dimension
+                    # print(id_ch.shape, attn_ch.shape, pv_ch.shape)
+                    out = self.actor_module(
+                        pixel_values=pv_ch,
+                        input_ids=id_ch,
+                        attention_mask=attn_ch,
+                        use_cache=False  # pure forward
+                    )
+                    # Extract only the response-length slice and scale
+                    lg = out.logits[:, -response_length - 1:-1].div(temperature)
+                    # print(lg.shape)
+                    logits_list.append(lg)
+
+                # Concatenate all chunks: shape (B*T, response_length)
+                logits_flat = torch.cat(logits_list, dim=0)
+                # print(logits_flat.shape)
+                # Compute log-probs and entropy
+                entropy = verl_F.entropy_from_logits(logits_flat)
+
+                entropy = entropy.reshape((batch_size, traj_len,) + entropy.shape[1:])
+
                 mask = self.generate_traj_mask(micro_batch['finish_step'], traj_len)
                 _, entropy = self.apply_mask_with_grad_control(entropy, entropy, mask)
-                entropy = entropy.contiguous().view((batch_size, traj_len*response_length))
+
+                entropy = entropy.reshape((batch_size, traj_len * response_length))
                 return entropy
 
 
@@ -480,13 +501,13 @@ class RobDataParallelPPOActor(BasePPOActor):
             micro_batches = batch.split(micro_batch_size)
 
         log_probs_lst = []
+        self.logger.log(f"Current GPU memory usage, before _forward_micro_batch: {gpu_memory()}")
         for micro_batch in micro_batches:
             # log current gpu memory
-            self.logger.log(f"Current GPU memory usage: {torch.cuda.memory_allocated() / (1024 ** 3):.2f} GB")
             with torch.no_grad():
                 _, log_probs = self._forward_micro_batch(micro_batch, temperature=temperature)
             log_probs_lst.append(log_probs)
-            self.logger.log(f"Processed micro_batch with size {micro_batch.size()} and log_probs shape {log_probs.shape}, len of log_probs_lst: {len(log_probs_lst)}")
+        self.logger.log(f"Processed micro_batch with size {micro_batch.size()} and log_probs shape {log_probs.shape}, len of log_probs_lst: {len(log_probs_lst)}")
         log_probs = torch.concat(log_probs_lst, dim=0)
 
         if use_dynamic_bsz:
@@ -512,6 +533,7 @@ class RobDataParallelPPOActor(BasePPOActor):
         # See PPO paper for details. https://arxiv.org/abs/1707.06347
         dataloader = batch.split(self.config.ppo_mini_batch_size)
         metrics = {}
+        self.logger.log(f"Current GPU memory usage, before update_policy: {gpu_memory()}")
         for batch_idx, data in enumerate(dataloader):
             # split batch into micro_batches
             mini_batch = data
@@ -523,6 +545,7 @@ class RobDataParallelPPOActor(BasePPOActor):
                 micro_batches = mini_batch.split(self.config.ppo_micro_batch_size)
 
             self.actor_optimizer.zero_grad()
+            self.logger.log(f"before _forward_micro_batch_update: {gpu_memory()}")
             for test_idx, data in enumerate(micro_batches):
                 data = data.cuda()  # actor device is cpu when using offload
                 responses = data['responses']
@@ -553,10 +576,10 @@ class RobDataParallelPPOActor(BasePPOActor):
                 pixel_values = data["pixel_values"]
                 responses = data["responses"]
                 
-                input_ids = input_ids.contiguous().view((batch_size * traj_len,) + input_ids.shape[2:])
-                attention_mask = attention_mask.contiguous().view((batch_size * traj_len,) + attention_mask.shape[2:])
-                pixel_values = pixel_values.contiguous().view((batch_size * traj_len,) + pixel_values.shape[2:])
-                responses = responses.contiguous().view((batch_size * traj_len,) + responses.shape[2:])
+                input_ids = input_ids.reshape((batch_size * traj_len,) + input_ids.shape[2:])
+                attention_mask = attention_mask.reshape((batch_size * traj_len,) + attention_mask.shape[2:])
+                pixel_values = pixel_values.reshape((batch_size * traj_len,) + pixel_values.shape[2:])
+                responses = responses.reshape((batch_size * traj_len,) + responses.shape[2:])
                 loss_info = {
                     #'actor/entropy_loss': entropy_loss.detach().item(),
                     'actor/pg_loss':0,
@@ -567,7 +590,6 @@ class RobDataParallelPPOActor(BasePPOActor):
                 assert traj_len % self.config.traj_mini_batch_size == 0, f"traj_len {traj_len} must be divisible by traj_mini_batch_size {self.config.traj_mini_batch_size}"
                 traj_split_num = int(traj_len / self.config.traj_mini_batch_size)
                 # B L -> B * L
-                
                 # if self.rank == 0: breakpoint()
                 for i in range(0, traj_len, int(traj_len / traj_split_num)):
                     entropy, log_prob = self._forward_micro_batch_update(input_ids=input_ids[i:i+int(traj_len/traj_split_num)], attention_mask=attention_mask[i:i+int(traj_len/traj_split_num)], pixel_values=pixel_values[i:i+int(traj_len/traj_split_num)], responses=responses[i:i+int(traj_len/traj_split_num)], temperature=temperature)
@@ -597,16 +619,22 @@ class RobDataParallelPPOActor(BasePPOActor):
                     loss_info['actor/pg_loss'] =  loss_info['actor/pg_loss'] + policy_loss.detach().item()
                     loss_info['actor/pg_clipfrac'] = loss_info['actor/pg_clipfrac'] + pg_clipfrac.detach().item()
                     loss_info['actor/ppo_kl'] = loss_info['actor/ppo_kl'] +  ppo_kl.detach().item()
-
                 append_to_dict(metrics, loss_info)
+            self.logger.log(f"after micro batch update: {gpu_memory()}")
             grad_norm = self._optimizer_step()
+            self.logger.log(f"after _optimizer_step: {gpu_memory()}")
             data = {'actor/grad_norm': grad_norm.detach().item()}
             append_to_dict(metrics, data)
             torch.cuda.empty_cache()
+            self.logger.log(f"after empty_cache: {gpu_memory()}")
         self.actor_optimizer.zero_grad()
+        self.logger.log(f"after zero_grad: {gpu_memory()}")
         torch.cuda.synchronize()
+        self.logger.log(f"after synchronize: {gpu_memory()}")
         torch.distributed.barrier()
+        self.logger.log(f"after barrier: {gpu_memory()}")
         torch.cuda.empty_cache()
+        self.logger.log(f"after final empty_cache: {gpu_memory()}")
         return metrics
 
     

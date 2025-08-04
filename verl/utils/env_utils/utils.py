@@ -15,7 +15,8 @@ from enum import Enum
 import string
 import matplotlib.pyplot as plt
 from verl.utils.vla_utils.internvl.utils import process_image_internvl
-
+import re
+import numpy as np
 
 class ActionType(Enum):
     DELTA_EEF = 0
@@ -27,6 +28,26 @@ class TaskSuite(Enum):
     MANISKILL = 0
     GRUTOPIA = 1
     LIBERO = 2
+
+
+def parse_action_vectors(s: str):
+    results = []
+    segments = s.strip().split('|')
+    for seg in segments:
+        seg = seg.strip()
+        if not seg:
+            continue
+        try:
+            # 用正则匹配形如 "+0 -8 -2 +3 -4 +13 +1" 的 7 个有符号整数
+            matches = re.findall(r'[+-]?\d+', seg)
+            if len(matches) != 7:
+                print(f"Error response: {seg}")
+                results.append(None)
+            else:
+                results.append(np.array([int(m) for m in matches]))
+        except:
+            results.append(None)
+    return results
     
 def action_to_str(action, num_floats: int = 4):
     return [np.round(a, num_floats) for a in action.values()] if isinstance(action, dict) else [np.round(a, num_floats) for a in action]
@@ -153,7 +174,7 @@ def plot_and_print_stats(arr, name, save_parent):
     
     return statistics_dict
 
-def action_decode(prompts, string_response, task_suite: TaskSuite):
+def action_decode(prompts, string_response, task_suite: TaskSuite, **process_kwargs):
     if task_suite == TaskSuite.GRUTOPIA:
         gripper_states = prompts['gripper_states']
         q_eefs = prompts['q_eefs']
@@ -183,21 +204,54 @@ def action_decode(prompts, string_response, task_suite: TaskSuite):
             )
             actions.append(action)
     elif task_suite == TaskSuite.MANISKILL:
-        qposes = prompts['qposes']
-        actions = []
-        for idx in range(len(string_response)):
-            response = string_response[idx]
-            action_extracted = parse_and_validate_vector(response)
-            if action_extracted is None:
-                action_extracted = np.zeros(7, dtype=np.float64)
-                if qposes[idx][-1] >= 0.037:
-                    action_extracted[-1] = 1
+        horizon = process_kwargs.get('horizon', 1)
+        if horizon == 1:
+            qposes = prompts['qposes']
+            actions = []
+            for idx in range(len(string_response)):
+                response = string_response[idx]
+                action_extracted = parse_and_validate_vector(response)
+                if action_extracted is None:
+                    action_extracted = np.zeros(7, dtype=np.float64)
+                    if qposes[idx][-1] >= 0.037:
+                        action_extracted[-1] = 1
+                    else:
+                        action_extracted[-1] = -1
                 else:
-                    action_extracted[-1] = -1
-            else:
-                action_extracted[:-1] = action_extracted[:-1] / 1000
-            actions.append(action_extracted)
-        actions = np.array(actions)
+                    action_extracted[:-1] = action_extracted[:-1] / 1000
+                actions.append(action_extracted)
+            actions = np.array(actions)
+        else:
+            qposes = prompts['qposes']
+            tmp_actions = []
+            for idx in range(len(string_response)):
+                response = string_response[idx]
+                action_extracted = parse_action_vectors(response)
+                summon_actions = []
+                for sub_action in action_extracted:
+                    if sub_action is None:
+                        break
+                    else:
+                        # print(f"sub action: {sub_action}")
+                        sub_action = sub_action.astype(np.float32)
+                        sub_action[:-1] = sub_action[:-1] / 1000
+                        summon_actions.append(sub_action)
+                        # print(summon_actions[-1])
+                if len(summon_actions) > horizon:
+                    summon_actions = summon_actions[:horizon]
+                else:
+                    tmp_action = np.zeros(7, dtype=np.float32)
+                    if qposes[idx][-1] >= 0.037:
+                        tmp_action[-1] = 1
+                    else:
+                        tmp_action[-1] = -1
+                    summon_actions += [tmp_action] * (horizon - len(summon_actions))
+                tmp_actions.append(summon_actions)
+            actions = []
+            for i in range(horizon):
+                actions.append(np.array([summon_actions[i] for summon_actions in tmp_actions]))
+            actions = np.array(actions)
+            print(f"decoded action shape: {actions.shape}")
     return actions
         
 
@@ -310,6 +364,7 @@ def obs_process(inputs: List, task_descriptions, task_suite: TaskSuite, done_mas
                 }
     elif task_suite == TaskSuite.MANISKILL:
         dual_cam = kwargs.get('dual_cam', True)
+        horizon = kwargs.get("horizon", 1)
         instructions = task_descriptions
         num_patches_list = []
         pixel_values = []
@@ -323,7 +378,10 @@ def obs_process(inputs: List, task_descriptions, task_suite: TaskSuite, done_mas
             qposes.append(qpos)
             camera = inputs['sensor_data']["base_camera"]["rgb"][env_id]
             rescaled_qpos = np.round(qpos * 1000).astype(np.int32)
-            query = f"The current position state of the robotic arm's end gripper is as follows: {{Joint_0: {rescaled_qpos[0]}, Joint_1: {rescaled_qpos[1]}, Joint_2: {rescaled_qpos[2]}, Joint_3: {rescaled_qpos[3]}, Joint_4: {rescaled_qpos[4]}, Joint_5: {rescaled_qpos[5]}, Joint_6: {rescaled_qpos[6]}, Joint_7: {rescaled_qpos[7]}, Joint_8: {rescaled_qpos[8]}}}. What action should the robot take to get better completion of instruction: {instructions[env_id]}?"
+            if horizon == 1:
+                query = f"The current position state of the robotic arm's end gripper is as follows: {{Joint_0: {rescaled_qpos[0]}, Joint_1: {rescaled_qpos[1]}, Joint_2: {rescaled_qpos[2]}, Joint_3: {rescaled_qpos[3]}, Joint_4: {rescaled_qpos[4]}, Joint_5: {rescaled_qpos[5]}, Joint_6: {rescaled_qpos[6]}, Joint_7: {rescaled_qpos[7]}, Joint_8: {rescaled_qpos[8]}}}. What action should the robot take to get better completion of instruction: {instructions[env_id]}?"
+            else:
+                query = f"The current joint state of the robotic arm is as follows: {{{rescaled_qpos[0]} {rescaled_qpos[1]} {rescaled_qpos[2]} {rescaled_qpos[3]} {rescaled_qpos[4]} {rescaled_qpos[5]} {rescaled_qpos[6]} {rescaled_qpos[7]} {rescaled_qpos[8]}}}. What action should the robot take to get better completion of instruction: {instructions[env_id]}?"
             pixel_0 = process_image_internvl(camera)
             patch_list = []
             pixels = []

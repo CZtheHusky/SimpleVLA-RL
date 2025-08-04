@@ -103,6 +103,7 @@ class RobHFRollout(BaseRollout):
             }
             from verl.workers.rollout.env_workers.maniskill_env_worker import env_worker, EnvActor
             self.env_actor = EnvActor(pid=os.getpid(), execute_horizon=config.action_chunks_len)
+            self.process_kwargs['horizon'] = config.action_chunks_len
         elif "libero" in config.task_suite_name:
             self.max_steps = {   
                 "libero_spatial": 512,   # max step length 193
@@ -294,19 +295,34 @@ class RobHFRollout(BaseRollout):
             tmp_vla_output = self._generate_one_step(vla_input, step)
             # self.logger.log(f"after _generate_one_step, {gpu_memory()}")
             tmp_vec_action, tmp_string_response = tmp_vla_output["action"]
-            if vla_output is not None:
-                mask = ~is_already_done
-                mask_cpu = mask.cpu().numpy()
-                vla_output["responses"][mask] = tmp_vla_output["responses"]
-                vla_output["input_ids"][mask] = tmp_vla_output["input_ids"]
-                vla_output["attention_mask"][mask] = tmp_vla_output["attention_mask"]
-                vec_action[mask_cpu] = tmp_vec_action
-                mask_positions = np.nonzero(mask_cpu)[0]
-                for idx, out_str in zip(mask_positions, tmp_string_response):
-                    string_response[idx] = out_str
+            if self.config.action_chunks_len == 1:
+                if vla_output is not None:
+                    mask = ~is_already_done
+                    mask_cpu = mask.cpu().numpy()
+                    vla_output["responses"][mask] = tmp_vla_output["responses"]
+                    vla_output["input_ids"][mask] = tmp_vla_output["input_ids"]
+                    vla_output["attention_mask"][mask] = tmp_vla_output["attention_mask"]
+                    vec_action[mask_cpu] = tmp_vec_action
+                    mask_positions = np.nonzero(mask_cpu)[0]
+                    for idx, out_str in zip(mask_positions, tmp_string_response):
+                        string_response[idx] = out_str
+                else:
+                    vla_output = tmp_vla_output
+                    vec_action, string_response = tmp_vla_output["action"]
             else:
-                vla_output = tmp_vla_output
-                vec_action, string_response = tmp_vla_output["action"]
+                if vla_output is not None:
+                    mask = ~is_already_done
+                    mask_cpu = mask.cpu().numpy()
+                    vla_output["responses"][mask] = tmp_vla_output["responses"]
+                    vla_output["input_ids"][mask] = tmp_vla_output["input_ids"]
+                    vla_output["attention_mask"][mask] = tmp_vla_output["attention_mask"]
+                    vec_action[:, mask_cpu] = tmp_vec_action
+                    mask_positions = np.nonzero(mask_cpu)[0]
+                    for idx, out_str in zip(mask_positions, tmp_string_response):
+                        string_response[idx] = out_str
+                else:
+                    vla_output = tmp_vla_output
+                    vec_action, string_response = tmp_vla_output["action"]
             step_data = {
                     "responses": vla_output["responses"],
                     "input_ids": vla_output["input_ids"],
@@ -748,7 +764,7 @@ class RobHFRollout(BaseRollout):
             # for idx, response in enumerate(string_response):
             #     response_str += f"idx: {idx}, R: {response}\n"
             # print(response_str)
-            actions = action_decode(prompts, string_response, self.task_suite)
+            actions = action_decode(prompts, string_response, self.task_suite, **self.process_kwargs)
             response_attention_mask = get_eos_mask(response_id=generation_output, eos_token=eos_token_id, dtype=attention_mask.dtype)
             attention_mask = torch.cat((attention_mask, response_attention_mask), dim=-1)
             assert self.processor.pad_token_id is not None

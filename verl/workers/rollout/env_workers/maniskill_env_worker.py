@@ -104,7 +104,7 @@ class EnvActor:
                 images = [[]] * self.num_envs
                 actions, string_responses = action
                 last_finished = deepcopy(self.finished)
-                for sub_idx, sub_act, sub_string in enumerate(zip(actions, string_responses)):
+                for sub_idx, (sub_act, sub_string) in enumerate(zip(actions, string_responses)):
                     if isinstance(sub_act, list):
                         sub_act = np.array(sub_act)
                     obs, _, terminated, _, _ = self.env.step(sub_act)

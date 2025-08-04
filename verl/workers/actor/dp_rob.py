@@ -546,6 +546,8 @@ class RobDataParallelPPOActor(BasePPOActor):
 
             self.actor_optimizer.zero_grad()
             self.logger.log(f"before _forward_micro_batch_update: {gpu_memory()}")
+            torch.cuda.empty_cache()
+            self.logger.log(f"after empty_cache: {gpu_memory()}")
             for test_idx, data in enumerate(micro_batches):
                 data = data.cuda()  # actor device is cpu when using offload
                 responses = data['responses']

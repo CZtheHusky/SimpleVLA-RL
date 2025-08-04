@@ -341,6 +341,10 @@ class RobActorRolloutRefWorker(Worker):
 
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
     def update_actor(self, data: DataProto):
+        self.logger.log(f"update_actor, before empty cache, {gpu_memory()}")
+        torch.cuda.empty_cache()
+        self.logger.log(f"update_actor, after empty cache, {gpu_memory()}")
+
         #data = data.to('cuda')
         assert self._is_actor
         #data.batch = data.batch.cuda()
@@ -365,6 +369,9 @@ class RobActorRolloutRefWorker(Worker):
 
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
     def compute_entropy(self, data: DataProto):
+        self.logger.log(f"compute_entropy, before empty cache, {gpu_memory()}")
+        torch.cuda.empty_cache()
+        self.logger.log(f"compute_entropy, after empty cache, {gpu_memory()}")
         
         data = data.to('cuda')
 
@@ -373,22 +380,28 @@ class RobActorRolloutRefWorker(Worker):
         data.batch = data.batch.cuda()
 
         log_gpu_memory_usage('Before compute entropy', logger=logger)
-
+        self.logger.log(f"Before compute entropy, {gpu_memory()}")
         metrics = self.actor.compute_entropy(bacth_data=data)
-
+        self.logger.log(f"After compute entropy, {gpu_memory()}")
         log_gpu_memory_usage('After compute entropy', logger=logger)
 
         # TODO: here, we should return all metrics
         output = DataProto(meta_info={'metrics': metrics})
         output = output.to('cpu')
+        self.logger.log(f"After metrics move to cpu, {gpu_memory()}")
         
         torch.cuda.synchronize()
         torch.distributed.barrier()
+        self.logger.log(f"before empty cache, {gpu_memory()}")
         torch.cuda.empty_cache()
+        self.logger.log(f"after empty cache, {gpu_memory()}")
         return output
 
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
     def generate_sequences(self, prompts):
+        self.logger.log(f"generate_sequences, before empty cache, {gpu_memory()}")
+        torch.cuda.empty_cache()
+        self.logger.log(f"generate_sequences, after empty cache, {gpu_memory()}")
         prompts = prompts.to('cuda')
         # set to False if it is validation
         recompute_log_prob = prompts.meta_info.get('recompute_log_prob', True)
@@ -427,7 +440,7 @@ class RobActorRolloutRefWorker(Worker):
             output.meta_info['pad_token_id'] = self.tokenizer.pad_token_id
             old_log_probs = self.actor.compute_log_prob(data=output)
             output.batch['old_log_probs'] = old_log_probs
-        self.logger.log(f"Actor log prob computed, shape; {old_log_probs.shape} {gpu_memory()}")
+            self.logger.log(f"Actor log prob computed, shape; {old_log_probs.shape} {gpu_memory()}")
         output = output.to('cpu')
         self.logger.log(f"Actor move to cpu: {gpu_memory()}")
 

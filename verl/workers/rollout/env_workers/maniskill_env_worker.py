@@ -4,15 +4,16 @@ from mani_skill.vector.wrappers.gymnasium import ManiSkillVectorEnv
 import numpy as np
 import traceback
 from verl.workers.rollout.env_workers.utils import action_to_str, write_instruction_action
-
+from copy import deepcopy
 
 class EnvActor:
-    def __init__(self, pid=0):
+    def __init__(self, pid=0, execute_horizon=1):
         self.env = None
         self.env_ids = []
         self.env_unique_ids = []
         self.num_envs = 0
         self.pid = pid
+        self.execute_horizon = execute_horizon
 
     def process_obs(self, obs):
         obs['agent']['qpos'] = obs['agent']['qpos'].cpu().numpy()
@@ -65,39 +66,75 @@ class EnvActor:
         }  
 
     def step(self, action):
-        try:
-            action, string_response = action
-            if isinstance(action, list):
-                action = np.array(action)
-            obs, _, terminated, _, _ = self.env.step(action)
-            obs = self.process_obs(obs)
-            terminated = terminated.cpu().numpy()
-            self.finished = np.logical_or(self.finished, terminated)
-            self.finish_step += 1
-            valid_images = None
-            if self.is_valid:
-                valid_images = np.concatenate([self.last_obs['sensor_data']["base_camera"]["rgb"], self.last_obs['sensor_data']["hand_camera"]["rgb"]], axis=2)
-                images = []
-                for env_index in range(self.num_envs):
-                    local_img = valid_images[env_index]
-                    local_action = action[env_index]
-                    local_raw_action = string_response[env_index]
-                    action_str = f"A: {action_to_str(local_action, 3)}"
-                    raw_action = "RA: " + local_raw_action
-                    img = write_instruction_action(action_str, local_img, raw_action)
-                    images.append(img)
-                valid_images = np.stack(images, axis=0)
-            self.last_obs = obs
-        except Exception as e:
-            print(f"Error during step execution: {e}")
-            traceback.print_exc()
-            return {'error': f"{type(e).__name__}: {e}\n{traceback.format_exc()}"}
-        return {
-            'obs': obs,
-            'complete': self.finished,
-            'finish_step': self.finish_step,
-            'valid_images': valid_images
-        }
+        if self.execute_horizon == 1:
+            try:
+                images = [[]] * self.num_envs
+                action, string_response = action
+                if isinstance(action, list):
+                    action = np.array(action)
+                obs, _, terminated, _, _ = self.env.step(action)
+                obs = self.process_obs(obs)
+                terminated = terminated.cpu().numpy()
+                self.finished = np.logical_or(self.finished, terminated)
+                self.finish_step += 1
+                valid_images = None
+                if self.is_valid:
+                    valid_images = np.concatenate([self.last_obs['sensor_data']["base_camera"]["rgb"], self.last_obs['sensor_data']["hand_camera"]["rgb"]], axis=2)
+                    for env_index in range(self.num_envs):
+                        local_img = valid_images[env_index]
+                        local_action = action[env_index]
+                        local_raw_action = string_response[env_index]
+                        action_str = f"A: {action_to_str(local_action, 3)}"
+                        raw_action = "RA: " + local_raw_action
+                        img = write_instruction_action(action_str, local_img, raw_action)
+                        images[env_index].append(img)
+                self.last_obs = obs
+            except Exception as e:
+                print(f"Error during step execution: {e}")
+                traceback.print_exc()
+                return {'error': f"{type(e).__name__}: {e}\n{traceback.format_exc()}"}
+            return {
+                'obs': obs,
+                'complete': self.finished,
+                'finish_step': self.finish_step,
+                'valid_images': images
+            }
+        else:
+            try:
+                images = [[]] * self.num_envs
+                actions, string_responses = action
+                last_finished = deepcopy(self.finished)
+                for sub_idx, sub_act, sub_string in enumerate(zip(actions, string_responses)):
+                    if isinstance(sub_act, list):
+                        sub_act = np.array(sub_act)
+                    obs, _, terminated, _, _ = self.env.step(sub_act)
+                    obs = self.process_obs(obs)
+                    terminated = terminated.cpu().numpy()
+                    self.finished = np.logical_or(self.finished, terminated)
+                    self.finish_step[~last_finished] += 1
+                    last_finished = deepcopy(self.finished)
+                    valid_images = None
+                    if self.is_valid:
+                        valid_images = np.concatenate([self.last_obs['sensor_data']["base_camera"]["rgb"], self.last_obs['sensor_data']["hand_camera"]["rgb"]], axis=2)
+                        for env_index in range(self.num_envs):
+                            local_img = valid_images[env_index]
+                            local_action = sub_act[env_index]
+                            local_raw_action = sub_string[env_index]
+                            action_str = f"A: {action_to_str(local_action, 3)}"
+                            raw_action = "RA: " + local_raw_action
+                            img = write_instruction_action(action_str, local_img, raw_action)
+                            images[sub_idx].append(img)
+                    self.last_obs = obs
+            except Exception as e:
+                print(f"Error during step execution: {e}")
+                traceback.print_exc()
+                return {'error': f"{type(e).__name__}: {e}\n{traceback.format_exc()}"}
+            return {
+                'obs': obs,
+                'complete': self.finished,
+                'finish_step': self.finish_step,
+                'valid_images': valid_images
+            }
 
     def close(self):
         self.env.close()

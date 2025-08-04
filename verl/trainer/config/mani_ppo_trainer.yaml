@@ -87,6 +87,7 @@ actor_rollout_ref:
   rollout:
     vla: ${actor_rollout_ref.model.vla}
     dual_cam: true
+    action_token_len: ${actor_rollout_ref.model.action_token_len}
     action_chunks_len: ${actor_rollout_ref.model.action_chunks_len}
     resize_target: [480, 480]
     experiment_name: maniskill

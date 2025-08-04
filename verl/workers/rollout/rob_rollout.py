@@ -83,7 +83,7 @@ class RobHFRollout(BaseRollout):
         self.dt_flag = dt_flag
         self.processor = AutoProcessor.from_pretrained(config.pretrained_checkpoint, trust_remote_code=True)
         if config.vla == "internvl_chat":
-            self.response_length = 16 if config.response_length is None else config.response_length
+            self.response_length = config.action_token_len * config.action_chunks_len
         self.vla_preprocess()
         self.process_kwargs = {}
         self.logger = logger
@@ -102,7 +102,7 @@ class RobHFRollout(BaseRollout):
                 "StackCube-v1": 150,
             }
             from verl.workers.rollout.env_workers.maniskill_env_worker import env_worker, EnvActor
-            self.env_actor = EnvActor(pid=os.getpid())
+            self.env_actor = EnvActor(pid=os.getpid(), execute_horizon=config.action_chunks_len)
         elif "libero" in config.task_suite_name:
             self.max_steps = {   
                 "libero_spatial": 512,   # max step length 193
@@ -324,7 +324,7 @@ class RobHFRollout(BaseRollout):
                     task_records['complete'][venv_index] = is_complete[venv_index]
                     task_records['finish_step'][venv_index] = finish_step[venv_index]
                     if is_valid:
-                        valid_video[venv_index].append(output['valid_images'][venv_index])
+                        valid_video[venv_index].extend(output['valid_images'][venv_index])
             inputs = output['obs']
             step += self.config.action_chunks_len
         desired_steps = (max_steps + self.config.action_chunks_len - 1) // self.config.action_chunks_len

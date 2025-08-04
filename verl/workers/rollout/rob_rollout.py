@@ -53,7 +53,7 @@ from verl.utils.env_utils.utils import obs_process, extract_action_vector, assem
 from verl.workers.rollout.env_workers.libero_env_worker import center_crop_image
 import ray
 import os
-
+from concurrent.futures import ThreadPoolExecutor, wait
 
 
 
@@ -76,9 +76,9 @@ class RobHFRollout(BaseRollout):
         self.config = config
         self.module = module
         if isinstance(self.module, FSDP):
-            self.early_stop = True  # early stop for dp rollout
+            self.early_stop = False  # early stop for dp rollout
         else:
-            self.early_stop = False
+            self.early_stop = True
         # self.rank = int(os.environ.get("RANK", 0))
         self.dt_flag = dt_flag
         self.processor = AutoProcessor.from_pretrained(config.pretrained_checkpoint, trust_remote_code=True)
@@ -119,6 +119,9 @@ class RobHFRollout(BaseRollout):
         rollout_dir = os.path.join("rollouts", config.experiment_name, dt_flag)
         os.makedirs(rollout_dir, exist_ok=True)
         self.rollout_dir = rollout_dir
+        # self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=8)
+        self.executor = ThreadPoolExecutor(max_workers=8)
+        self.futures = []
         #oft add
         # unnorm_key=config.unnorm_key
         # if  unnorm_key not in self.module.norm_stats and f"{unnorm_key}_no_noops" in self.module.norm_stats:
@@ -130,7 +133,16 @@ class RobHFRollout(BaseRollout):
         # if gpus:
         #     for gpu in gpus:  
         #         tf.config.experimental.set_memory_growth(gpu, True)
-    
+
+    def _check_futures(self):
+        done, _ = wait(self.futures, timeout=0)
+        for future in done:
+            try:
+                future.result()
+            except Exception as e:
+                print(f"Image save failed: {e}")
+        self.futures = [f for f in self.futures if not f.done()]
+
     def vla_preprocess(self):
         if self.config.vla in ["openvla","openvla-oft"]:
             gpus = tf.config.experimental.list_physical_devices('GPU')
@@ -240,7 +252,7 @@ class RobHFRollout(BaseRollout):
         
     def should_continue(self, step, max_step, is_already_done):
         if self.early_stop:
-            return step < max_step and not np.all(is_already_done)
+            return step < max_step and not torch.all(is_already_done)
         else:
             return step < max_step
                            
@@ -274,9 +286,9 @@ class RobHFRollout(BaseRollout):
         task_instructions = init_data["task_instructions"]
         inputs = init_data['obs']
         task_records = {
-            "complete": init_data['complete'],
-            "finish_step": init_data['finish_step'],
-            "task_file_name": init_data['task_file_name']
+            "complete": deepcopy(init_data['complete']),
+            "finish_step": deepcopy(init_data['finish_step']),
+            "task_file_name": deepcopy(init_data['task_file_name'])
         }
         # if is_valid:
         #     for venv_index in init_data['task_file_name'].keys():
@@ -285,6 +297,7 @@ class RobHFRollout(BaseRollout):
         step = 0
         is_already_done = torch.zeros(len(env_unique_id), dtype=torch.bool).cuda()
         vla_output = None
+        # breakpoint()
         while self.should_continue(step, max_steps, is_already_done):
             current_inputs = inputs
             current_task_instructions = task_instructions
@@ -295,34 +308,22 @@ class RobHFRollout(BaseRollout):
             tmp_vla_output = self._generate_one_step(vla_input, step)
             # self.logger.log(f"after _generate_one_step, {gpu_memory()}")
             tmp_vec_action, tmp_string_response = tmp_vla_output["action"]
-            if self.config.action_chunks_len == 1:
-                if vla_output is not None:
-                    mask = ~is_already_done
-                    mask_cpu = mask.cpu().numpy()
-                    vla_output["responses"][mask] = tmp_vla_output["responses"]
-                    vla_output["input_ids"][mask] = tmp_vla_output["input_ids"]
-                    vla_output["attention_mask"][mask] = tmp_vla_output["attention_mask"]
-                    vec_action[mask_cpu] = tmp_vec_action
-                    mask_positions = np.nonzero(mask_cpu)[0]
-                    for idx, out_str in zip(mask_positions, tmp_string_response):
-                        string_response[idx] = out_str
+            if vla_output is not None:
+                mask = ~is_already_done
+                mask_cpu = mask.cpu().numpy()
+                vla_output["responses"][mask] = tmp_vla_output["responses"]
+                vla_output["input_ids"][mask] = tmp_vla_output["input_ids"]
+                vla_output["attention_mask"][mask] = tmp_vla_output["attention_mask"]
+                if self.config.action_chunks_len == 1:
+                    vec_action[mask_cpu] = tmp_vec_action 
                 else:
-                    vla_output = tmp_vla_output
-                    vec_action, string_response = tmp_vla_output["action"]
-            else:
-                if vla_output is not None:
-                    mask = ~is_already_done
-                    mask_cpu = mask.cpu().numpy()
-                    vla_output["responses"][mask] = tmp_vla_output["responses"]
-                    vla_output["input_ids"][mask] = tmp_vla_output["input_ids"]
-                    vla_output["attention_mask"][mask] = tmp_vla_output["attention_mask"]
                     vec_action[:, mask_cpu] = tmp_vec_action
-                    mask_positions = np.nonzero(mask_cpu)[0]
-                    for idx, out_str in zip(mask_positions, tmp_string_response):
-                        string_response[idx] = out_str
-                else:
-                    vla_output = tmp_vla_output
-                    vec_action, string_response = tmp_vla_output["action"]
+                mask_positions = np.nonzero(mask_cpu)[0]
+                for idx, out_str in zip(mask_positions, tmp_string_response):
+                    string_response[idx] = out_str
+            else:
+                vla_output = tmp_vla_output
+                vec_action, string_response = tmp_vla_output["action"]
             step_data = {
                     "responses": vla_output["responses"],
                     "input_ids": vla_output["input_ids"],
@@ -341,6 +342,8 @@ class RobHFRollout(BaseRollout):
                     task_records['finish_step'][venv_index] = finish_step[venv_index]
                     if is_valid:
                         valid_video[venv_index].extend(output['valid_images'][venv_index])
+                # else:
+                    # print(f"env_id: {venv_index} is already done, finish_step: {task_records[venv_index]}")
             inputs = output['obs']
             step += self.config.action_chunks_len
         desired_steps = (max_steps + self.config.action_chunks_len - 1) // self.config.action_chunks_len
@@ -352,15 +355,25 @@ class RobHFRollout(BaseRollout):
             for _ in range(pad_count):
                 vla_history.append(pad_entry.copy())
         if is_valid:
+            print(f"Task finish steps: {task_records['finish_step']}")
             for venv_idx, images in valid_video.items():
                 complete = task_records['complete'][venv_idx]
                 task_file = task_records['task_file_name'][venv_idx]
-                save_rollout_video(
+                # assert len(images) == task_records['finish_step'][venv_idx], f"Mismatch in number of images {len(images)} and finish step {task_records['finish_step'][venv_idx]} for task file {task_file}."
+                future = self.executor.submit(
+                    save_rollout_video,
                     images,
                     self.rollout_dir,
                     task_file,
-                    complete
-                )    
+                    complete,
+                )      
+                self.futures.append(future)     
+                # save_rollout_video(
+                #     images,
+                #     self.rollout_dir,
+                #     task_file,
+                #     complete
+                # )    
         self.module.train()
         
         batch = {
@@ -389,6 +402,7 @@ class RobHFRollout(BaseRollout):
         self.logger.log(f"end _venv_generate_minibatch, {gpu_memory()}")
         torch.cuda.empty_cache()
         self.logger.log(f"after empty cache, {gpu_memory()}")
+        self._check_futures()
         return output_batch
      
      
@@ -743,6 +757,7 @@ class RobHFRollout(BaseRollout):
                 param_ctx = contextlib.nullcontext()
             # questions_str += f"start inference\nlen inputs: {input_ids.shape}\npixel_values: {pixel_values.shape}"
             # print(questions_str)
+            # print(f"Input ids: {input_ids.shape}")
             with param_ctx:
                 with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
                     pixel_values = pixel_values.to('cuda').to(torch.bfloat16)
@@ -759,7 +774,17 @@ class RobHFRollout(BaseRollout):
                     )
             # response_str = f"step: {step} inference done\n"
             full_seq = torch.concatenate((input_ids, generation_output), dim=-1)
+            # print(f"full_seq: {full_seq.shape}")
             responses = tokenizer.batch_decode(generation_output, skip_special_tokens=True)
+            try:
+                cur_response_length = generation_output.shape[-1]
+                if cur_response_length != self.response_length:
+                    print(f"Response length mismatch, cur {cur_response_length}, desired: {self.response_length}\ntrying to pad response")
+                pad_token_id = self.processor.pad_token_id
+                delta_len = self.response_length - cur_response_length
+                generation_output = torch.concatenate([generation_output, torch.zeros([*generation_output.shape[:-1], delta_len], dtype=generation_output.dtype, device=generation_output.device)], dim=-1)
+            except Exception as e:
+                print(f"Warning, {e}\nshape: {generation_output.shape}")
             string_response = [response.split(template.sep.strip())[0].strip() for response in responses]
             # for idx, response in enumerate(string_response):
             #     response_str += f"idx: {idx}, R: {response}\n"

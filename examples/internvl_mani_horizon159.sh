@@ -12,7 +12,7 @@ export TORCH_USE_CUDA_DSA=1
 export RAY_memory_usage_threshold=1
 export RAY_memory_monitor_refresh_ms=0
 PROJECT_NAME='SimpleVLA-RL'
-EXPERIMENT_NAME='maniskill_4' 
+EXPERIMENT_NAME='maniskill_4_159' 
 # For openvla-oft Libero-Long traj1 SFT or traj all SFT models can be find in https://huggingface.co/collections/Haozhan72/simplevla-rl-6833311430cd9df52aeb1f86
 SFT_MODEL_PATH="/mnt/nfs3/caozhe/workspace/vlav-project/maniskill_stack_cubes_dual_horizon_4/internvl2-2b/v0-20250804-023954/checkpoint-1600"
 CKPT_PATH="./ckpts"
@@ -24,7 +24,7 @@ NUM_GPUS=4
 NUM_NODES=1 
 ALIGN_PATH="align.json"
 
-HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=4,5,3,7 python -m verl.trainer.main_ppo \
+HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=0,1,2,3 python -m verl.trainer.main_ppo \
     data.task_suite_name=$DATASET_NAME \
     data.n_samples=8 \
     data.filter_accuracy=False \
@@ -32,10 +32,10 @@ HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=4,5,3,7 python -m verl.trainer.main_ppo 
     data.accuracy_upper_bound=0.9 \
     data.oversample_factor=1 \
     data.train_batch_size=32 \
-    data.val_batch_size=40 \
+    data.val_batch_size=120 \
     data.rob_dataset_kwargs.num_envs_seeds=4096  \
     data.rob_dataset_kwargs.len_dataset=240 \
-    data.max_prompt_length=796 \
+    data.max_prompt_length=700 \
     data.max_response_length=15 \
     actor_rollout_ref.actor.strategy=dp \
     critic.strategy=dp  \
@@ -53,7 +53,7 @@ HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=4,5,3,7 python -m verl.trainer.main_ppo 
     actor_rollout_ref.actor.clip_ratio_high=0.28 \
     actor_rollout_ref.actor.clip_ratio_low=0.2 \
     actor_rollout_ref.actor.num_images_in_input=2 \
-    actor_rollout_ref.actor.traj_mini_batch_size=20 \
+    actor_rollout_ref.actor.traj_mini_batch_size=10 \
     actor_rollout_ref.model.enable_gradient_checkpointing=False \
     actor_rollout_ref.model.use_remove_padding=False \
     actor_rollout_ref.actor.entropy_coeff=0. \
@@ -68,7 +68,7 @@ HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=4,5,3,7 python -m verl.trainer.main_ppo 
     actor_rollout_ref.rollout.num_steps_wait=10 \
     actor_rollout_ref.rollout.pretrained_checkpoint=$SFT_MODEL_PATH \
     actor_rollout_ref.rollout.center_crop=True \
-    actor_rollout_ref.rollout.max_prompt_length=796 \
+    actor_rollout_ref.rollout.max_prompt_length=700 \
     actor_rollout_ref.rollout.log_prob_micro_batch_size=32 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.name=hf \
@@ -91,6 +91,6 @@ HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=4,5,3,7 python -m verl.trainer.main_ppo 
     algorithm.adv_params.reward_model_gamma=1.0 \
     trainer.runtime_env=$ALIGN_PATH \
     trainer.wandb_mode=online \
-    trainer.val_before_train=False \
+    trainer.val_before_train=True \
 
 

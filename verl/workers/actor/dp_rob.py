@@ -56,6 +56,10 @@ class RobDataParallelPPOActor(BasePPOActor):
         self.use_ulysses_sp = False #self.ulysses_sequence_parallel_size > 1
         self.compute_entropy_from_logits = torch.compile(verl_F.entropy_from_logits, dynamic=True)
         self.logger = logger
+        if torch.distributed.is_initialized():
+            self.rank = torch.distributed.get_rank()
+        else:
+            self.rank = 0
        
     # def process_tensor(self, tensor, pad_id):
     #     mask = tensor != pad_id
@@ -151,7 +155,7 @@ class RobDataParallelPPOActor(BasePPOActor):
         
             
         response_length = micro_batch['responses'].size(-1) # 7*8
-        
+        self.logger.log(f"BS: {batch_size} TL: {traj_len} TOT: {tot_pad_len} RL: {response_length}")
         with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
             input_ids = micro_batch['input_ids']
             attention_mask = micro_batch['attention_mask']
@@ -507,8 +511,8 @@ class RobDataParallelPPOActor(BasePPOActor):
             with torch.no_grad():
                 _, log_probs = self._forward_micro_batch(micro_batch, temperature=temperature)
             log_probs_lst.append(log_probs)
-        self.logger.log(f"Processed micro_batch with size {micro_batch.size()} and log_probs shape {log_probs.shape}, len of log_probs_lst: {len(log_probs_lst)}")
         log_probs = torch.concat(log_probs_lst, dim=0)
+        self.logger.log(f"Processed micro_batch with size {micro_batch.size()} and log_probs shape {log_probs.shape}, len of log_probs_lst: {len(log_probs_lst)} log_prob_shape: {log_probs.shape}")
 
         if use_dynamic_bsz:
             indices = list(itertools.chain.from_iterable(indices))
@@ -518,7 +522,7 @@ class RobDataParallelPPOActor(BasePPOActor):
 
         return log_probs
 
-    def update_policy(self, data: DataProto):
+    def update_policy_legacy(self, data: DataProto):
         self.actor_module.train()
 
         assert self.config.ppo_mini_batch_size % self.config.ppo_micro_batch_size == 0
@@ -545,9 +549,9 @@ class RobDataParallelPPOActor(BasePPOActor):
                 micro_batches = mini_batch.split(self.config.ppo_micro_batch_size)
 
             self.actor_optimizer.zero_grad()
-            self.logger.log(f"before _forward_micro_batch_update: {gpu_memory()}")
-            torch.cuda.empty_cache()
-            self.logger.log(f"after empty_cache: {gpu_memory()}")
+            # self.logger.log(f"before _forward_micro_batch_update: {gpu_memory()}")
+            # torch.cuda.empty_cache()
+            # self.logger.log(f"after empty_cache: {gpu_memory()}")
             for test_idx, data in enumerate(micro_batches):
                 data = data.cuda()  # actor device is cpu when using offload
                 responses = data['responses']
@@ -640,6 +644,140 @@ class RobDataParallelPPOActor(BasePPOActor):
         return metrics
 
     
+
+    def update_policy(self, data: DataProto):
+        self.actor_module.train()
+
+        assert self.config.ppo_mini_batch_size % self.config.ppo_micro_batch_size == 0
+        self.gradient_accumulation = self.config.ppo_mini_batch_size // self.config.ppo_micro_batch_size
+        temperature = data.meta_info['temperature']  # temperature must be in the data.meta_info to avoid slient error
+
+        select_keys = ['responses', 'input_ids', 'attention_mask', 'pixel_values', 'old_log_probs', 'advantages',"finish_step"]
+        batch = data.select(batch_keys=select_keys).batch
+        assert self.config.ppo_micro_batch_size == 1
+
+        # Split to make minibatch iterator for updating the actor
+        # See PPO paper for details. https://arxiv.org/abs/1707.06347
+        dataloader = batch.split(self.config.ppo_mini_batch_size)
+        metrics = {}
+        self.logger.log(f"Current GPU memory usage, before update_policy: {gpu_memory()}")
+        # if self.rank == 0: breakpoint()
+        for batch_idx, data in enumerate(dataloader):
+            # split batch into micro_batches
+            mini_batch = data
+            if self.config.use_dynamic_bsz:
+                max_token_len = self.config.ppo_max_token_len_per_gpu * self.ulysses_sequence_parallel_size
+                micro_batches, _ = rearrange_micro_batches(batch=mini_batch, max_token_len=max_token_len)
+            else:
+                # split batch into micro_batches
+                micro_batches = mini_batch.split(self.config.ppo_micro_batch_size)
+
+            self.actor_optimizer.zero_grad()
+            # self.logger.log(f"before _forward_micro_batch_update: {gpu_memory()}")
+            # torch.cuda.empty_cache()
+            # self.logger.log(f"after empty_cache: {gpu_memory()}")
+            for test_idx, data in enumerate(micro_batches):
+                data = data.cuda()  # actor device is cpu when using offload
+                responses = data['responses']
+                
+                response_length = responses.size(1) *  responses.size(2)
+                finish_step = data['finish_step'] * self.config.action_token_len
+                steps = torch.arange(response_length, device=data['responses'].device)  # (traj_len,)
+                steps_expanded = steps.unsqueeze(0).expand(data['responses'].size(0), -1)
+                response_mask = steps_expanded < finish_step.unsqueeze(1)  # (batch_size, traj_len)
+                
+                response_mask_sum = response_mask.sum(axis=None)
+
+                old_log_prob = data['old_log_probs']
+                advantages = data['advantages']
+                
+                #clip_ratio = self.config.clip_ratio
+                clip_ratio_high = self.config.clip_ratio_high
+                clip_ratio_low = self.config.clip_ratio_low
+                entropy_coeff = self.config.entropy_coeff
+
+                batch_size = data['responses'].size(0)
+                traj_len = data['responses'].size(1)
+                tot_pad_len = data['input_ids'].size(2)
+                
+                
+                input_ids = data['input_ids']
+                attention_mask = data['attention_mask']
+                pixel_values = data["pixel_values"]
+                responses = data["responses"]
+                
+                input_ids = input_ids.reshape((batch_size * traj_len,) + input_ids.shape[2:])
+                attention_mask = attention_mask.reshape((batch_size * traj_len,) + attention_mask.shape[2:])
+                pixel_values = pixel_values.reshape((batch_size * traj_len,) + pixel_values.shape[2:])
+                responses = responses.reshape((batch_size * traj_len,) + responses.shape[2:])
+                loss_info = {
+                    #'actor/entropy_loss': entropy_loss.detach().item(),
+                    'actor/pg_loss':0,
+                    'actor/pg_clipfrac': 0,
+                    'actor/ppo_kl': 0,
+                }
+                
+                # assert traj_len % self.config.traj_mini_batch_size == 0, f"traj_len {traj_len} must be divisible by traj_mini_batch_size {self.config.traj_mini_batch_size}"
+                # traj_split_num = int(traj_len / self.config.traj_mini_batch_size)
+                n_chunks = (traj_len * batch_size + self.config.traj_mini_batch_size - 1) // self.config.traj_mini_batch_size
+                id_chunks = input_ids.chunk(n_chunks, dim=0)
+                attn_chunks = attention_mask.chunk(n_chunks, dim=0)
+                pv_chunks = pixel_values.chunk(n_chunks, dim=0)
+                resp_chunks = responses.chunk(n_chunks, dim=0)
+                # B L -> B * L
+                # if self.rank == 0: breakpoint()
+                for i, id_ch, attn_ch, pv_ch, res_ch in zip(range(0, traj_len, self.config.traj_mini_batch_size), id_chunks, attn_chunks, pv_chunks, resp_chunks):
+                    entropy, log_prob = self._forward_micro_batch_update(
+                        input_ids=id_ch, 
+                        attention_mask=attn_ch, 
+                        pixel_values=pv_ch, 
+                        responses=res_ch, 
+                        temperature=temperature
+                    )
+                    slice_id = i * self.config.action_token_len * self.config.action_chunks_len
+                    next_slice_id = (i + self.config.traj_mini_batch_size) * self.config.action_token_len * self.config.action_chunks_len
+                    # assert next_slice_id <= old_log_prob.shape[-1], f"next_slice_id {next_slice_id} exceeds old_log_prob size {old_log_prob.shape[-1]}"
+                    old_log_prob_tmp = old_log_prob[:, slice_id: next_slice_id]
+                    advantages_tmp = advantages[:, slice_id: next_slice_id]
+                    response_mask_tmp = response_mask[:, slice_id: next_slice_id]
+
+                    pg_loss, pg_clipfrac, ppo_kl = core_algos.compute_policy_loss(old_log_prob=old_log_prob_tmp,
+                                                                            log_prob=log_prob,
+                                                                            advantages=advantages_tmp,
+                                                                            eos_mask=response_mask_tmp,
+                                                                            clip_ratio_high=clip_ratio_high,
+                                                                            clip_ratio_low=clip_ratio_low)
+
+                    response_mask_tmp_sum = response_mask_tmp.sum(axis=None)
+                    pg_loss = pg_loss * response_mask_tmp_sum
+                    pg_clipfrac = pg_clipfrac * response_mask_tmp_sum / response_mask_sum
+                    ppo_kl = ppo_kl * response_mask_tmp_sum / response_mask_sum
+                    
+                    policy_loss = pg_loss / response_mask_sum
+                    
+                    loss = policy_loss / self.gradient_accumulation
+                    loss.backward()
+                    loss_info['actor/pg_loss'] =  loss_info['actor/pg_loss'] + policy_loss.detach().item()
+                    loss_info['actor/pg_clipfrac'] = loss_info['actor/pg_clipfrac'] + pg_clipfrac.detach().item()
+                    loss_info['actor/ppo_kl'] = loss_info['actor/ppo_kl'] +  ppo_kl.detach().item()
+                append_to_dict(metrics, loss_info)
+            # self.logger.log(f"after micro batch update: {gpu_memory()}")
+            grad_norm = self._optimizer_step()
+            self.logger.log(f"after _optimizer_step: {gpu_memory()}")
+            data = {'actor/grad_norm': grad_norm.detach().item()}
+            append_to_dict(metrics, data)
+            torch.cuda.empty_cache()
+            # self.logger.log(f"after empty_cache: {gpu_memory()}")
+        self.actor_optimizer.zero_grad()
+        # self.logger.log(f"after zero_grad: {gpu_memory()}")
+        torch.cuda.synchronize()
+        # self.logger.log(f"after synchronize: {gpu_memory()}")
+        torch.distributed.barrier()
+        # self.logger.log(f"after barrier: {gpu_memory()}")
+        torch.cuda.empty_cache()
+        self.logger.log(f"after final empty_cache: {gpu_memory()}")
+        return metrics
+
     def compute_entropy(self, bacth_data: DataProto):
         
         if bacth_data.meta_info['train_mode'] ==True:

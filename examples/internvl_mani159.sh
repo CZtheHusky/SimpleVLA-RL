@@ -12,19 +12,19 @@ export TORCH_USE_CUDA_DSA=1
 export RAY_memory_usage_threshold=1
 export RAY_memory_monitor_refresh_ms=0
 PROJECT_NAME='SimpleVLA-RL'
-EXPERIMENT_NAME='maniskill_8' 
+EXPERIMENT_NAME='maniskill_1_159' 
 # For openvla-oft Libero-Long traj1 SFT or traj all SFT models can be find in https://huggingface.co/collections/Haozhan72/simplevla-rl-6833311430cd9df52aeb1f86
 SFT_MODEL_PATH="/mnt/nfs_68/caozhe/workspace/vlav-project/maniskill_stack_cubes_dual/internvl2-2b/v0-20250729-171130/checkpoint-640"
 CKPT_PATH="./ckpts"
 # DATASET_NAME can be libero_10 (libero_Long), libero_90, libero_spatial, libero_object, libero_goal
 DATASET_NAME="maniskill"
 VLA_NAME="internvl_chat"
-NUM_GPUS=8
+NUM_GPUS=4
 # If you want to use 2*8 GPU to RL. Set NUM_NODES=2
 NUM_NODES=1 
 ALIGN_PATH="align.json"
 
-HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python -m verl.trainer.main_ppo \
+HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=0,1,2,3 python -m verl.trainer.main_ppo \
     data.task_suite_name=$DATASET_NAME \
     data.n_samples=8 \
     data.filter_accuracy=False \

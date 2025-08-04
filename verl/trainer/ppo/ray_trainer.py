@@ -290,7 +290,7 @@ class RayTrainer(object):
         else:
             self.kl_ctrl = core_algos.FixedKLController(kl_coef=0.)
         self.dt_flag = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        self.logger = LocalLogger(log_name=f"{self.dt_flag}/RayTrainer")
+        self.logger = LocalLogger(log_name=f"{config.trainer.experiment_name}/{self.dt_flag}/RayTrainer")
         self._create_dataloader()
 
     def _create_dataloader(self):   # next fix
@@ -676,8 +676,9 @@ class RayTrainer(object):
                     with Timer(name='update_actor', text="{name}: {seconds:.1f} seconds") as timer:
                         batch.meta_info['is_filtered'] = True
                         batch.meta_info['train_mode'] = False
-                        actor_output = self.actor_rollout_wg.update_actor(batch)
-                        entropy_output = self.actor_rollout_wg.compute_entropy(data=batch)
+                        actor_output, entropy_output = self.actor_rollout_wg.entropy_update_actor(batch)
+                        # actor_output = self.actor_rollout_wg.update_actor(batch)
+                        # entropy_output = self.actor_rollout_wg.compute_entropy(data=batch)
                     metrics['timing/update_actor'] = timer.last
                     actor_output_metrics = reduce_metrics(actor_output.meta_info['metrics'])
                     entropy_output_metrics = reduce_metrics(entropy_output.meta_info['metrics'])

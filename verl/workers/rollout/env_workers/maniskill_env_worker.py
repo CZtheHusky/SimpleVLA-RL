@@ -68,7 +68,7 @@ class EnvActor:
     def step(self, action):
         if self.execute_horizon == 1:
             try:
-                images = [[]] * self.num_envs
+                images = [[] for _ in range(self.num_envs)]
                 action, string_response = action
                 if isinstance(action, list):
                     action = np.array(action)
@@ -84,7 +84,7 @@ class EnvActor:
                         local_img = valid_images[env_index]
                         local_action = action[env_index]
                         local_raw_action = string_response[env_index]
-                        action_str = f"A: {action_to_str(local_action, 3)}"
+                        action_str = f"ENV: {env_index} STEP: {self.finish_step[env_index]} A: {action_to_str(local_action, 3)}"
                         raw_action = "RA: " + local_raw_action
                         img = write_instruction_action(action_str, local_img, raw_action)
                         images[env_index].append(img)
@@ -101,7 +101,7 @@ class EnvActor:
             }
         else:
             try:
-                images = [[]] * self.num_envs
+                images = [[] for _ in range(self.num_envs)]
                 actions, string_responses = action
                 last_finished = deepcopy(self.finished)
                 for sub_idx, (sub_act, sub_string) in enumerate(zip(actions, string_responses)):
@@ -120,7 +120,7 @@ class EnvActor:
                             local_img = valid_images[env_index]
                             local_action = sub_act[env_index]
                             local_raw_action = sub_string[env_index]
-                            action_str = f"A: {action_to_str(local_action, 3)}"
+                            action_str = f"ENV: {env_index} STEP: {self.finish_step[env_index]} A: {action_to_str(local_action, 3)}"
                             raw_action = "RA: " + local_raw_action
                             img = write_instruction_action(action_str, local_img, raw_action)
                             images[sub_idx].append(img)

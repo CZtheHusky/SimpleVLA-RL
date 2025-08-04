@@ -287,15 +287,34 @@ def dispatch_dp_compute_data_proto_with_func(worker_group, *args, **kwargs):
 
 
 def collect_dp_compute_data_proto(worker_group, output):
+ from verl.protocol import DataProto
+ import ray
+
+ # 如果每个元素是 tuple，则转置成多个“单通道”列表
+ if isinstance(output[0], tuple):
+     # 创建 N 个收集 list，其中 N = tuple 的长度
+     outputs = [[] for _ in range(len(output[0]))]
+     for o in output:
+         for idx, oo in enumerate(o):
+             outputs[idx].append(oo)
+
+     # 对每个子列表递归调用
+     return [
+         collect_sinlge_dp_compute_data_proto(worker_group, sub_o)
+         for sub_o in outputs
+     ]
+
+ else:
+     return collect_sinlge_dp_compute_data_proto(worker_group, output)
+
+def collect_sinlge_dp_compute_data_proto(worker_group, output):
     from verl.protocol import DataProto
     import ray
-
     for o in output:
         assert isinstance(o, (DataProto, ray.ObjectRef)), f"expecting {o} to be DataProto, but got {type(o)}"
 
     output = collect_dp_compute(worker_group, output)
     return _concat_data_proto_or_future(output)
-
 
 def get_predefined_dispatch_fn(dispatch_mode):
     predefined_dispatch_mode_fn = {

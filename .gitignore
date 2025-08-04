@@ -141,3 +141,4 @@ ManiSkill
 deltaQ_backbone/
 rollouts/
 ckpts/
+*debug*

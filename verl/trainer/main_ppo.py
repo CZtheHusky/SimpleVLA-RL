@@ -114,13 +114,20 @@ def main(config):
             runtime_env['env_vars'].update({"WANDB_API_KEY": api_key})
             runtime_env['env_vars'].update({"RAY_DEBUG": "1"})
             print(runtime_env)
-            ray.init(runtime_env=runtime_env, _temp_dir=ray_tmp_dir)
+            ray.init(
+                runtime_env=runtime_env, 
+                _temp_dir=ray_tmp_dir,
+            )
+            
         else:
             runtime_env = {'env_vars': {'TOKENIZERS_PARALLELISM': 'true', 'NCCL_DEBUG': 'WARN'}}
             runtime_env['env_vars'].update({"WANDB_API_KEY": api_key})
             runtime_env['env_vars'].update({"RAY_DEBUG": "1"})
             print(runtime_env)
-            ray.init(runtime_env=runtime_env, _temp_dir=ray_tmp_dir)
+            ray.init(
+                runtime_env=runtime_env, 
+                _temp_dir=ray_tmp_dir,
+            )
 
     ray.get(main_task.remote(config))
 

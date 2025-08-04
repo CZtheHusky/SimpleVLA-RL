@@ -251,7 +251,7 @@ def action_decode(prompts, string_response, task_suite: TaskSuite, **process_kwa
             for i in range(horizon):
                 actions.append(np.array([summon_actions[i] for summon_actions in tmp_actions]))
             actions = np.array(actions)
-            print(f"decoded action shape: {actions.shape}")
+            # print(f"decoded action shape: {actions.shape}")
     return actions
         
 

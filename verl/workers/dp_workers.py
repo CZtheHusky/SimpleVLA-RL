@@ -70,8 +70,9 @@ class RobActorRolloutRefWorker(Worker):
         if not torch.distributed.is_initialized():
             torch.distributed.init_process_group(backend="nccl")
         # build device mesh
+        # breakpoint()
         world_size = torch.distributed.get_world_size()
-        self.logger = LocalLogger(log_name=f"{dt_flag}/RobActorRolloutRefWorker", world_size=world_size, rank=self._rank)
+        self.logger = LocalLogger(log_name=f"{config.rollout.experiment_name}/{dt_flag}/RobActorRolloutRefWorker", world_size=world_size, rank=self._rank)
         # try:
             # rank = torch.distributed.get_rank()
             # self.logger.log(f"torch rank: {rank}")
@@ -338,6 +339,13 @@ class RobActorRolloutRefWorker(Worker):
         torch.cuda.synchronize()
         torch.distributed.barrier()
         torch.cuda.empty_cache()
+        
+        
+    @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
+    def entropy_update_actor(self, data: DataProto):
+        actor_out = self.update_actor(data)
+        entropy_out = self.compute_entropy(data)
+        return actor_out, entropy_out
 
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
     def update_actor(self, data: DataProto):

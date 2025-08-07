@@ -217,5 +217,5 @@ def save_rollout_video(rollout_images, rollout_dir, task_name, success):
     for img in rollout_images:
         video_writer.append_data(img)
     video_writer.close()
-    print(f"Saved rollout MP4 at path {mp4_path}")
+    # print(f"Saved rollout MP4 at path {mp4_path}")
     return mp4_path

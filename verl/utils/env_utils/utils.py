@@ -33,6 +33,8 @@ class TaskSuite(Enum):
 def parse_action_vectors(s: str):
     results = []
     segments = s.strip().split('|')
+    if len(segments) == 0:
+        print(f"Error response H: {s}")
     for seg in segments:
         seg = seg.strip()
         if not seg:
@@ -41,7 +43,7 @@ def parse_action_vectors(s: str):
             # 用正则匹配形如 "+0 -8 -2 +3 -4 +13 +1" 的 7 个有符号整数
             matches = re.findall(r'[+-]?\d+', seg)
             if len(matches) != 7:
-                print(f"Error response: {seg}")
+                print(f"Error response H: {seg}")
                 results.append(None)
             else:
                 results.append(np.array([int(m) for m in matches]))
@@ -65,6 +67,7 @@ def parse_and_validate_vector(input_str: str):
     """
     # 1. 基础检查：确保输入是字符串
     if not isinstance(input_str, str):
+        print("Error response:", input_str)
         return None
 
     # 2. 预处理：去除首尾多余的空白字符
@@ -72,6 +75,7 @@ def parse_and_validate_vector(input_str: str):
 
     # 3. 验证格式：是否被花括号包围
     if not (s.startswith('{') and s.endswith('}')):
+        print("Error response:", input_str)
         return None
 
     # 4. 提取花括号内的内容
@@ -79,6 +83,7 @@ def parse_and_validate_vector(input_str: str):
     
     # 如果内容为空（例如输入是 "{}" 或 "{ }"），也视为无效
     if not content:
+        print("Error response:", input_str)
         return None
 
     # 5. 分割内容
@@ -86,6 +91,7 @@ def parse_and_validate_vector(input_str: str):
 
     # 6. 验证数量：是否正好是7个数字
     if len(parts) != 7:
+        print("Error response:", input_str)
         return None
 
     # 7. 验证内容：尝试将所有部分转换为整数
@@ -175,6 +181,8 @@ def plot_and_print_stats(arr, name, save_parent):
     return statistics_dict
 
 def action_decode(prompts, string_response, task_suite: TaskSuite, **process_kwargs):
+    total = 0
+    errors = 0
     if task_suite == TaskSuite.GRUTOPIA:
         gripper_states = prompts['gripper_states']
         q_eefs = prompts['q_eefs']
@@ -211,7 +219,9 @@ def action_decode(prompts, string_response, task_suite: TaskSuite, **process_kwa
             for idx in range(len(string_response)):
                 response = string_response[idx]
                 action_extracted = parse_and_validate_vector(response)
+                total += 1
                 if action_extracted is None:
+                    errors += 1
                     action_extracted = np.zeros(7, dtype=np.float64)
                     if qposes[idx][-1] >= 0.037:
                         action_extracted[-1] = 1
@@ -227,6 +237,7 @@ def action_decode(prompts, string_response, task_suite: TaskSuite, **process_kwa
             for idx in range(len(string_response)):
                 response = string_response[idx]
                 action_extracted = parse_action_vectors(response)
+                total += horizon
                 summon_actions = []
                 for sub_action in action_extracted:
                     if sub_action is None:
@@ -239,12 +250,14 @@ def action_decode(prompts, string_response, task_suite: TaskSuite, **process_kwa
                         # print(summon_actions[-1])
                 if len(summon_actions) > horizon:
                     summon_actions = summon_actions[:horizon]
+                    errors += (len(summon_actions) - horizon)
                 else:
                     tmp_action = np.zeros(7, dtype=np.float32)
                     if qposes[idx][-1] >= 0.037:
                         tmp_action[-1] = 1
                     else:
                         tmp_action[-1] = -1
+                    errors += (horizon - len(summon_actions))
                     summon_actions += [tmp_action] * (horizon - len(summon_actions))
                 tmp_actions.append(summon_actions)
             actions = []
@@ -252,7 +265,7 @@ def action_decode(prompts, string_response, task_suite: TaskSuite, **process_kwa
                 actions.append(np.array([summon_actions[i] for summon_actions in tmp_actions]))
             actions = np.array(actions)
             # print(f"decoded action shape: {actions.shape}")
-    return actions
+    return actions, total, errors
         
 
 

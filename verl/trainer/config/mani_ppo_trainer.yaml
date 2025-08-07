@@ -89,6 +89,7 @@ actor_rollout_ref:
     dual_cam: true
     action_token_len: ${actor_rollout_ref.model.action_token_len}
     action_chunks_len: ${actor_rollout_ref.model.action_chunks_len}
+    horizon: 1
     resize_target: [480, 480]
     experiment_name: maniskill
     unnorm_key: 
@@ -102,9 +103,9 @@ actor_rollout_ref:
     max_prompt_length: 512
     num_images_in_input: 2  
     name: vllm
-    temperature: 0.3
-    top_k: 20 # 0 for hf rollout, -1 for vllm rollout
-    top_p: 0.7
+    temperature: 1  # 1.0 for train, 0.3 for gen
+    top_k: 50 # 0 for hf rollout, -1 for vllm rollout # 50 for train, 20 for gen
+    top_p: 1.0  # 1.0 for train, 0.7 for gen
     prompt_length: ${data.max_prompt_length}  # not use for opensource
     response_length: ${data.max_response_length}
     # for vllm rollout
@@ -243,6 +244,7 @@ algorithm:
 
 trainer:
   total_epochs: 30
+  global_steps: 0
   total_training_steps: null
   project_name: verl_examples
   experiment_name: gsm8k
@@ -258,3 +260,6 @@ trainer:
   runtime_env: none
   val_before_train: False
   val_only: True
+  wandb_kwargs:
+    id: null
+    resume: allow

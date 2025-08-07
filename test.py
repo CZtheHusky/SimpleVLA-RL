@@ -85,18 +85,21 @@ current_strings = [
     # "{2 -4 1 3 0 -2 -3}", 
     # "{2 -4 1 3 0 -2 -3}{2 -4 1 3 0 -2 -3}{2 -4 1 3 0 -2 -3}{2 -4 1 3 0 -2 -3}", 
     # "2 -4 1 3 0 -2 -3", 
-    "2 -4 1 3 0 -2 -3|", 
-    "2 -4 1 3 0 -2 -3| 2 -4 1 3 0 -2 -3|", 
-    "0 0 0 0 0 0 1|",
-    "0 -1 0 0 0 0 1| 6 13 3 -3 7 -19 1|",
-    "0 -1 0 0 0 0 1| 6 13 3 -3 7 -19 1| 6 14 3 -3 7 -20 1| 5 10 2 -3 5 -14 1| 3 6 1 -2 3 -9 1| 1 3 1 0 0 0 1| 0 0 0 0 0 0 1| 0 0 0 0 0 0 1|",
-    "0 -1 0 0 0 0 1|",
-    "0 -1 0 0 0 0 1| 6 13 3 -3 7 -19 1|", 
-    "0 -1 0 0 0 0 1| 6 13 3 -3 7 -19 1| 6 14 3 -3 7 -20 1| 5 10 2 -3 5 -14 1| 3 6 1 -2 3 -9 1| 1 3 1 0 0 0 1| 0 0 0 0 0 0 1| 0 0 0 0 0 0 1|",
-    "-18 -35 -28 8 -9 70 1|",
-    "-18 -35 -28 8 -9 70 1| -30 -57 -44 13 -15 113 1|",
-    "-18 -35 -28 8 -9 70 1| -30 -57 -44 13 -15 113 1| -42 -80 -62 19 -21 160 1|",
-    "-18 -35 -28 8 -9 70 1| -30 -57 -44 13 -15 113 1| -42 -80 -62 19 -21 160 1| -56 -104 -80 24 -26 207 1| -70 -128 -99 30 -31 257 1| -86 -152 -117 36 -35 307 1| -104 -175 -137 42 -40 358 1| -123 -198 -156 48 -44 410 1|",
+    # "2 -4 1 3 0 -2 -3|", 
+    # "2 -4 1 3 0 -2 -3| 2 -4 1 3 0 -2 -3|", 
+    # "0 0 0 0 0 0 1|",
+    # "0 -1 0 0 0 0 1| 6 13 3 -3 7 -19 1|",
+    # "0 -1 0 0 0 0 1| 6 13 3 -3 7 -19 1| 6 14 3 -3 7 -20 1| 5 10 2 -3 5 -14 1| 3 6 1 -2 3 -9 1| 1 3 1 0 0 0 1| 0 0 0 0 0 0 1| 0 0 0 0 0 0 1|",
+    "0 -1 0 0 0 0 1",
+    "-3 -1 0 0 0 0 1",
+    # "0 -1 0 0 0 0 1| 6 13 3 -3 7 -19 1|", 
+    # "0 -1 0 0 0 0 1| 6 13 3 -3 7 -19 1| 6 14 3 -3 7 -20 1| 5 10 2 -3 5 -14 1| 3 6 1 -2 3 -9 1| 1 3 1 0 0 0 1| 0 0 0 0 0 0 1| 0 0 0 0 0 0 1|",
+    # "-18 -35 -28 +8 -9 70 1|",
+    # '+',
+    # '-',
+    # "-18 -35 -28 +8 -9 70 1| -30 -57 -44 13 -15 113 1|",
+    # "-18 -35 -28 +8 -9 70 1| -30 -57 -44 13 -15 113 1| -42 -80 -62 19 -21 160 1|",
+    # "-18 -35 -28 +8 -9 70 1| -30 -57 -44 13 -15 113 1| -42 -80 -62 19 -21 160 1| -56 -104 -80 24 -26 207 1| -70 -128 -99 30 -31 257 1| -86 -152 -117 36 -35 307 1| -104 -175 -137 42 -40 358 1| -123 -198 -156 48 -44 410 1|",
     # "2 -4 1 -3 0 -2 -3",
     # "2 -4 1 3 0 -2 -3 2 -4 1 3 0 -2 -3 2 -4 1 3 0 -2 -3 2 -4 1 3 0 -2 -3 2 -4 1 3 0 -2 -3"
 ]
@@ -110,27 +113,27 @@ for st_r in current_strings:
     toks = tokenizer.tokenize(st_r)
     # 2) 编成 id
     ids  = tokenizer.convert_tokens_to_ids(toks)
-    # print(f"原始字符串：{st_r}")
-    # for tok, idx in zip(toks, ids):
-    #     print(f"  Token: |{tok}|   →   ID: |{idx}|")
-    # print()
-tmp_response = "2, 4, 1, 3, 0, -2, 3, 40"
-num_tokens = len(tokenizer.encode(tmp_response))
-print(f"Response: {tmp_response}, Num Tokens: {num_tokens}")
+    print(f"原始字符串：{st_r}")
+    for tok, idx in zip(toks, ids):
+        print(f"  Token: |{tok}|   →   ID: |{idx}|")
+    print()
+# tmp_response = "2, 4, 1, 3, 0, -2, 3, 40"
+# num_tokens = len(tokenizer.encode(tmp_response))
+# print(f"Response: {tmp_response}, Num Tokens: {num_tokens}")
 
-tmp_response = "2 4 1 3 0 -2 3 40"
-num_tokens = len(tokenizer.encode(tmp_response))
-print(f"Response: {tmp_response}, Num Tokens: {num_tokens}")
+# tmp_response = "2 4 1 3 0 -2 3 40"
+# num_tokens = len(tokenizer.encode(tmp_response))
+# print(f"Response: {tmp_response}, Num Tokens: {num_tokens}")
 
-tmp_response = "{2 -4 1 3 0 -2 -3}"
-num_tokens = len(tokenizer.encode(tmp_response))
-print(f"Response: {tmp_response}, Num Tokens: {num_tokens}")
+# tmp_response = "{2 -4 1 3 0 -2 -3}"
+# num_tokens = len(tokenizer.encode(tmp_response))
+# print(f"Response: {tmp_response}, Num Tokens: {num_tokens}")
 
-response = ''
-for i in range(3):
-    response = tmp_response
-    print(f"Num Tokens: {len(tokenizer.encode(response))}")
+# response = ''
+# for i in range(3):
+#     response = tmp_response
+#     print(f"Num Tokens: {len(tokenizer.encode(response))}")
 
-tmp_response = "{2 -4 1 3 0 -2 -3}{2 -4 1 3 0 -2 -3}{2 -4 1 3 0 -2 -3}"
-num_tokens = len(tokenizer.encode(tmp_response))
-print(f"Response: {tmp_response}, Num Tokens: {num_tokens}")
+# tmp_response = "{2 -4 1 3 0 -2 -3}{2 -4 1 3 0 -2 -3}{2 -4 1 3 0 -2 -3}"
+# num_tokens = len(tokenizer.encode(tmp_response))
+# print(f"Response: {tmp_response}, Num Tokens: {num_tokens}")

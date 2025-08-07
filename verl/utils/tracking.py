@@ -21,7 +21,7 @@ from typing import List, Union
 class Tracking(object):
     supported_backend = ['wandb', 'console']
 
-    def __init__(self, project_name, experiment_name, default_backend: Union[str, List[str]] = 'console', config=None, local_dir=None, wandb_mode='online'):
+    def __init__(self, project_name, experiment_name, default_backend: Union[str, List[str]] = 'console', config=None, local_dir=None, wandb_mode='online', wandb_kwargs={}):
         if isinstance(default_backend, str):
             default_backend = [default_backend]
         for backend in default_backend:
@@ -36,7 +36,7 @@ class Tracking(object):
         if 'tracking' in default_backend or 'wandb' in default_backend:
             import wandb
             # wandb.mode = 'offline'
-            wandb.init(project=project_name, name=experiment_name, mode=wandb_mode, config=config)
+            wandb.init(project=project_name, name=experiment_name, mode=wandb_mode, config=config, **wandb_kwargs)
             self.logger['wandb'] = wandb
 
         if 'console' in default_backend:

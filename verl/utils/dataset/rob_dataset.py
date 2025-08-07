@@ -137,6 +137,11 @@ class MANISKILL_Dataset(Dataset):
         dataframes = []
         env_seeds = np.arange(num_envs_seeds) if train_val == "train" else np.arange(num_envs_seeds, num_envs_seeds + num_envs_seeds)
         self.len_dataset = len_dataset if train_val == 'train' else len_dataset // 2
+        if num_envs_seeds == len_dataset:
+            self.consistent = True
+            print('----------------------------\n---------------------Consistent Dataset---------------------\n---------------------')
+        else:
+            self.consistent = False
         task_descriptions = {
             "StackCube-v1": "stack the red cube on top of the green one",
         }
@@ -152,6 +157,8 @@ class MANISKILL_Dataset(Dataset):
         self.dataframe = dataframes
 
     def __getitem__(self, index):
+        if self.consistent:
+            return self.dataframe[index]
         random_index = np.random.randint(len(self.dataframe))
         return self.dataframe[random_index]
 

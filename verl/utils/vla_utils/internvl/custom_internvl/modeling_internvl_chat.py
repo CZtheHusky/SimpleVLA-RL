@@ -21,9 +21,29 @@ from .configuration_internvl_chat import InternVLChatConfig
 from .conversation import get_conv_template
 from .modeling_intern_vit import InternVisionModel
 from .modeling_internlm2 import InternLM2ForCausalLM
+import os
+from transformers import AutoTokenizer
+
+script_path = os.path.abspath(__file__)        # 脚本本身的绝对路径
+script_dir  = os.path.dirname(script_path)     # 脚本所在目录
 
 logger = logging.get_logger(__name__)
 
+
+def mask_logits_with_allow_list(logits: torch.FloatTensor,
+                                allow_list: list[int],
+                                device: torch.device):
+    """
+    logits: Tensor[..., vocab_size]
+    allow_list: 允许的 token id 列表
+    """
+    vocab_size = logits.size(-1)
+    # 构造一个 shape=(vocab_size,) 的 mask，默认都是 -inf
+    mask = torch.full((vocab_size,), float('-inf'), device=device, dtype=logits.dtype)
+    # 把允许的那些位置设为 0
+    mask[allow_list] = 0.0
+    # 广播加到 logits 上：allowed 的 logits +0，不允许的 +(-inf)
+    return logits + mask
 
 def version_cmp(v1, v2, op='eq'):
     import operator
@@ -84,7 +104,26 @@ class InternVLChatModel(PreTrainedModel):
 
         self.conv_template = get_conv_template(self.template)
         self.system_message = self.conv_template.system_message
+        self.action_allowed_fn = None
+        self.allow_list = None
         
+
+    def set_action_allowed_fn(self, allow_list):
+        # SIGNS = [' +', ' -', '|', '{', '}', ' ']
+        # numbers = list(range(0, 1000))
+        # # tokenizer = AutoTokenizer.from_pretrained(script_dir, trust_remote_code=True, use_fast=False)
+        # allow_list = []
+        # for str_ in SIGNS:
+        #     toks = tokenizer.tokenize(str_)
+        #     assert len(toks) == 1
+        #     allow_list.append(tokenizer.convert_tokens_to_ids(toks)[0])
+        # for str_ in numbers:
+        #     toks = tokenizer.tokenize(str(str_))
+        #     assert len(toks) == 1
+        #     allow_list.append(tokenizer.convert_tokens_to_ids(toks)[0])
+        self.allow_list = allow_list
+
+
     def forward(
             self,
             pixel_values: torch.FloatTensor,
@@ -139,7 +178,7 @@ class InternVLChatModel(PreTrainedModel):
             return_dict=return_dict,
         )
         logits = outputs.logits
-
+        logits = mask_logits_with_allow_list(logits, self.allow_list, logits.device)
         loss = None
         if labels is not None:
             # Shift so that tokens < n predict n

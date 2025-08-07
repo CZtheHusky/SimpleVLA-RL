@@ -49,11 +49,13 @@ import gc
 from multiprocessing import Process, Queue
 from collections import defaultdict
 from enum import Enum
-from verl.utils.env_utils.utils import obs_process, extract_action_vector, assemble_action_vla, action_decode, TaskSuite
+from verl.utils.env_utils.utils import obs_process, action_decode, TaskSuite
 from verl.workers.rollout.env_workers.libero_env_worker import center_crop_image
 import ray
 import os
 from concurrent.futures import ThreadPoolExecutor, wait
+from transformers import LogitsProcessorList, GenerationConfig
+from transformers.generation.logits_process import PrefixConstrainedLogitsProcessor, LogitsProcessor
 
 
 
@@ -68,6 +70,33 @@ class ENV_TYPE(Enum):
     VENV = 0
     SINGLE_ENV = 1
 
+class SafePrefixConstrainedLogitsProcessor(PrefixConstrainedLogitsProcessor):
+    def __call__(self, input_ids, scores):
+        if input_ids.shape[-1] == 0:
+            return scores
+        return super().__call__(input_ids, scores)
+
+class AllowListLogitsProcessor(LogitsProcessor):
+    def __init__(self, allow_list):
+        mask = torch.full((92553,), float('-inf'))
+        mask[allow_list] = 0.0
+        self.mask = mask
+        
+    def __call__(self, input_ids, scores):
+        return scores + self.mask.to(scores.device)
+    
+def generate_prefix_fn(numbers_list, symbols_list):
+    numbers_set = set(numbers_list)
+    symbols_set = set(symbols_list)
+    def prefix_allowed_tokens_fn(batch_id, input_ids):
+        if input_ids[-1].item() in numbers_set:
+            return symbols_list
+        elif input_ids[-1].item() in symbols_set:
+            return numbers_list
+        else:
+            print(f"Last id is either numbers or valid symbols: {input_ids}")
+            return symbols_list + numbers_list
+    return prefix_allowed_tokens_fn
 
 class RobHFRollout(BaseRollout):
 
@@ -83,7 +112,35 @@ class RobHFRollout(BaseRollout):
         self.dt_flag = dt_flag
         self.processor = AutoProcessor.from_pretrained(config.pretrained_checkpoint, trust_remote_code=True)
         if config.vla == "internvl_chat":
+            SIGNS = [' +', ' -', '|', '{', '}', ' ', '-', '{-']
+            numbers = list(range(0, 1000))
+            # tokenizer = AutoTokenizer.from_pretrained(script_dir, trust_remote_code=True, use_fast=False)
+            symbols_list = []
+            numbers_list = []
+            for str_ in SIGNS:
+                toks = self.processor.tokenize(str_)
+                assert len(toks) == 1
+                symbols_list.append(self.processor.convert_tokens_to_ids(toks)[0])
+            for str_ in numbers:
+                toks = self.processor.tokenize(str(str_))
+                assert len(toks) == 1
+                numbers_list.append(self.processor.convert_tokens_to_ids(toks)[0])
+            # symbols_list.append(self.processor.eos_token_id)
+
+            prefix_processor = SafePrefixConstrainedLogitsProcessor(
+                    prefix_allowed_tokens_fn=generate_prefix_fn(numbers_list, symbols_list),
+                    num_beams=1,
+                )
+            logits_processor = AllowListLogitsProcessor(numbers_list +  symbols_list)
+
+            processor_list = LogitsProcessorList([
+                prefix_processor,
+                logits_processor,
+            ])
+
             self.response_length = config.action_token_len * config.action_chunks_len
+            self.generation_config = dict(max_new_tokens=config.action_token_len * config.action_chunks_len, do_sample=config.do_sample, logits_processor=processor_list)
+            self.module.set_action_allowed_fn(symbols_list + numbers_list)
         self.vla_preprocess()
         self.process_kwargs = {}
         self.logger = logger
@@ -102,8 +159,9 @@ class RobHFRollout(BaseRollout):
                 "StackCube-v1": 150,
             }
             from verl.workers.rollout.env_workers.maniskill_env_worker import env_worker, EnvActor
-            self.env_actor = EnvActor(pid=os.getpid(), execute_horizon=config.action_chunks_len)
-            self.process_kwargs['horizon'] = config.action_chunks_len
+            self.env_actor = EnvActor(pid=os.getpid(), execute_horizon=config.horizon)
+            self.process_kwargs['horizon'] = config.horizon
+            self.horizon = config.horizon
         elif "libero" in config.task_suite_name:
             self.max_steps = {   
                 "libero_spatial": 512,   # max step length 193
@@ -122,6 +180,8 @@ class RobHFRollout(BaseRollout):
         # self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=8)
         self.executor = ThreadPoolExecutor(max_workers=8)
         self.futures = []
+        self.actions_total = 0
+        self.error_response_count = 0
         #oft add
         # unnorm_key=config.unnorm_key
         # if  unnorm_key not in self.module.norm_stats and f"{unnorm_key}_no_noops" in self.module.norm_stats:
@@ -169,13 +229,16 @@ class RobHFRollout(BaseRollout):
         num_chunks = max(batch_size // micro_batch_size, 1)
         # assert batch_size % micro_batch_size == 0, f"Batch size {batch_size} is not divisible by micro batch size {micro_batch_size}."    # avoid changing the num of venvs
         batch_prompts = prompts.chunk(chunks=num_chunks)
-        self.logger.log(f"before generate_sequences, {gpu_memory()}")
+        self.logger.log(f"Rollout, before generate_sequences, {gpu_memory()}")
         output = [self._generate_minibatch(p) for p in batch_prompts]
         output = DataProto.concat(output)
-        self.logger.log(f"after generate_sequences, {gpu_memory()}")
+        self.logger.log(f"Rollout, after generate_sequences, {gpu_memory()}")
         torch.cuda.empty_cache()
-        self.logger.log(f"after empty cache, {gpu_memory()}")
+        self.logger.log(f"Rollout, after empty cache, {gpu_memory()}")
+        self.logger.log(f"Rollout, Response total: {self.actions_total} Error: {self.error_response_count}")
         # print("Batch generation time:", time.time() - start_time)
+        self.actions_total = 0
+        self.error_response_count = 0
         return output
     
     
@@ -257,7 +320,7 @@ class RobHFRollout(BaseRollout):
             return step < max_step
                            
     def _venv_generate_minibatch(self, prompts):
-        self.logger.log(f"start _venv_generate_minibatch, {gpu_memory()}")
+        # self.logger.log(f"start _venv_generate_minibatch, {gpu_memory()}")
         self.module.eval()
         meta_info = prompts.meta_info
         n_samples = meta_info.get('n_samples', 1)
@@ -271,7 +334,7 @@ class RobHFRollout(BaseRollout):
         # print(infos_print)
         max_steps = self.max_steps[env_id[0]]
         batch_size = env_unique_id.size(0)    # Num of grpo samples
-        self.logger.log(f"before init venv, {gpu_memory()}")
+        # self.logger.log(f"before init venv, {gpu_memory()}")
         init_data = self.env_actor.init_venv(
             env_id,
             env_unique_id.cpu().numpy().squeeze(1),
@@ -280,15 +343,15 @@ class RobHFRollout(BaseRollout):
             global_steps,
             max_steps
         )
-        self.logger.log(f"after init venv, {gpu_memory()}")
+        # self.logger.log(f"after init venv, {gpu_memory()}")
         task_records = []
         valid_video = defaultdict(list)
         task_instructions = init_data["task_instructions"]
         inputs = init_data['obs']
         task_records = {
-            "complete": deepcopy(init_data['complete']),
-            "finish_step": deepcopy(init_data['finish_step']),
-            "task_file_name": deepcopy(init_data['task_file_name'])
+            "complete": init_data['complete'],
+            "finish_step": init_data['finish_step'],
+            "task_file_name": init_data['task_file_name'],
         }
         # if is_valid:
         #     for venv_index in init_data['task_file_name'].keys():
@@ -314,7 +377,7 @@ class RobHFRollout(BaseRollout):
                 vla_output["responses"][mask] = tmp_vla_output["responses"]
                 vla_output["input_ids"][mask] = tmp_vla_output["input_ids"]
                 vla_output["attention_mask"][mask] = tmp_vla_output["attention_mask"]
-                if self.config.action_chunks_len == 1:
+                if self.horizon == 1:
                     vec_action[mask_cpu] = tmp_vec_action 
                 else:
                     vec_action[:, mask_cpu] = tmp_vec_action
@@ -345,8 +408,8 @@ class RobHFRollout(BaseRollout):
                 # else:
                     # print(f"env_id: {venv_index} is already done, finish_step: {task_records[venv_index]}")
             inputs = output['obs']
-            step += self.config.action_chunks_len
-        desired_steps = (max_steps + self.config.action_chunks_len - 1) // self.config.action_chunks_len
+            step += self.horizon
+        desired_steps = (max_steps + self.horizon - 1) // self.horizon
         current = len(vla_history)
         if current < desired_steps:
             print("padding")
@@ -388,7 +451,8 @@ class RobHFRollout(BaseRollout):
                     
         for k,v in batch.items():
             batch[k] = torch.stack(v,dim=1) 
-        
+        if self.horizon != self.config.action_chunks_len:
+            task_records['finish_step'] = (task_records['finish_step'] + self.horizon - 1) // self.horizon
         for k in task_records.keys():
             batch[k] = task_records[k]
         del batch['task_file_name']
@@ -399,9 +463,9 @@ class RobHFRollout(BaseRollout):
             batch,
             batch_size=batch_size)
         output_batch = DataProto(batch=output_batch)
-        self.logger.log(f"end _venv_generate_minibatch, {gpu_memory()}")
+        self.logger.log(f"Rollout, end _venv_generate_minibatch, {gpu_memory()}")
         torch.cuda.empty_cache()
-        self.logger.log(f"after empty cache, {gpu_memory()}")
+        self.logger.log(f"Rollout, after empty cache, {gpu_memory()}")
         self._check_futures()
         return output_batch
      
@@ -723,7 +787,6 @@ class RobHFRollout(BaseRollout):
             # if verbose and pixel_values is not None:
             #     image_bs = pixel_values.shape[0]
             #     print(f'dynamic ViT batch size: {image_bs}')
-            do_sample = self.config.do_sample
             top_p = prompts.get('top_p', self.config.get('top_p', 1.0))
             top_k = prompts.get('top_k', self.config.get('top_k', 0))
             temperature = prompts.get('temperature', self.config.temperature)
@@ -766,11 +829,10 @@ class RobHFRollout(BaseRollout):
                         input_ids=input_ids,
                         attention_mask=attention_mask,
                         eos_token_id=eos_token_id,
-                        max_new_tokens=self.response_length,
-                        do_sample=do_sample,
                         temperature=temperature,
                         top_p=top_p,
                         top_k=top_k,
+                        **self.generation_config,
                     )
             # response_str = f"step: {step} inference done\n"
             full_seq = torch.concatenate((input_ids, generation_output), dim=-1)
@@ -789,7 +851,9 @@ class RobHFRollout(BaseRollout):
             # for idx, response in enumerate(string_response):
             #     response_str += f"idx: {idx}, R: {response}\n"
             # print(response_str)
-            actions = action_decode(prompts, string_response, self.task_suite, **self.process_kwargs)
+            actions, num_total, num_error = action_decode(prompts, string_response, self.task_suite, **self.process_kwargs)
+            self.actions_total += num_total
+            self.error_response_count += num_error
             response_attention_mask = get_eos_mask(response_id=generation_output, eos_token=eos_token_id, dtype=attention_mask.dtype)
             attention_mask = torch.cat((attention_mask, response_attention_mask), dim=-1)
             assert self.processor.pad_token_id is not None

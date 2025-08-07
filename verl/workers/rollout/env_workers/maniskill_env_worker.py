@@ -3,8 +3,19 @@ import gymnasium as gym
 from mani_skill.vector.wrappers.gymnasium import ManiSkillVectorEnv
 import numpy as np
 import traceback
-from verl.workers.rollout.env_workers.utils import action_to_str, write_instruction_action
+from internvla.models.utils import action_to_str, write_instruction_action
 from copy import deepcopy
+
+def set_state_dict(state_dict, num_samples=1):
+    if isinstance(state_dict, dict):
+        for k, v in state_dict.items():
+            if isinstance(v, dict):
+                state_dict[k] = set_state_dict(v, num_samples)
+            else:
+                total_sample = len(state_dict[k])
+                for i in range(1, total_sample, num_samples):
+                    state_dict[k][i:i+num_samples - 1] = state_dict[k][i-1]
+    return state_dict
 
 class EnvActor:
     def __init__(self, pid=0, execute_horizon=1):
@@ -21,7 +32,7 @@ class EnvActor:
         obs['sensor_data']["hand_camera"]["rgb"] = obs['sensor_data']["hand_camera"]["rgb"].cpu().numpy()
         return obs
     
-    def init_venv(self, env_ids, env_unique_ids, task_instructions, is_valid, global_steps, max_steps):
+    def init_venv(self, env_ids, env_unique_ids, task_instructions, is_valid=False, global_steps=0, max_steps=150, n_samples=8):
         assert len(env_ids) > 1, "Num venvs must be greater than 1 to avoid env re-initialization PHYSIX Errors."
         self.finished = np.zeros(len(env_unique_ids), dtype=bool)
         self.finish_step = np.zeros(len(env_unique_ids), dtype=int)
@@ -45,6 +56,9 @@ class EnvActor:
                 )
                 self.env = ManiSkillVectorEnv(env, auto_reset=True, ignore_terminations=False)
             obs, _ = self.env.reset(seed=env_unique_ids)
+            state_dict = self.env._env.get_state_dict()
+            state_dict = set_state_dict(state_dict, num_samples=n_samples)
+            obs, _ = self.env.reset(options={'reset_to_env_states': {'env_states': state_dict}})
             # print(obs['sensor_data']["base_camera"]["rgb"].shape, obs['sensor_data']["hand_camera"]["rgb"].shape)
             # valid_images = np.concatenate([obs['sensor_data']["base_camera"]["rgb"].cpu().numpy(), obs['sensor_data']["hand_camera"]["rgb"].cpu().numpy()], axis=2) if is_valid else None
         except Exception as e:
@@ -61,8 +75,8 @@ class EnvActor:
             'obs': obs,
             'task_instructions': task_instructions,
             'task_file_name': task_file_names,
-            'complete': self.finished,
-            'finish_step': self.finish_step,
+            'complete': self.finished.copy(),
+            'finish_step': self.finish_step.copy(),
         }  
 
     def step(self, action):
@@ -123,7 +137,7 @@ class EnvActor:
                             action_str = f"ENV: {env_index} STEP: {self.finish_step[env_index]} A: {action_to_str(local_action, 3)}"
                             raw_action = "RA: " + local_raw_action
                             img = write_instruction_action(action_str, local_img, raw_action)
-                            images[sub_idx].append(img)
+                            images[env_index].append(img)
                     self.last_obs = obs
             except Exception as e:
                 print(f"Error during step execution: {e}")
@@ -133,7 +147,7 @@ class EnvActor:
                 'obs': obs,
                 'complete': self.finished,
                 'finish_step': self.finish_step,
-                'valid_images': valid_images
+                'valid_images': images,
             }
 
     def close(self):

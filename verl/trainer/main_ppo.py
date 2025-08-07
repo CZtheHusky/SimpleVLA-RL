@@ -87,7 +87,7 @@ class RobRewardManager():
         #     if self.config.reward_model.rm_coef!=0:
         #         reward_tensor += self.config.reward_model.rm_coef * reward_tensor_dict['rm_scores']
 
-        if self.config.verifier.reward_coef!=0:
+        if self.config.verifier.reward_coef != 0:
             
             reward_metrics['verifier'] = reward_tensor_dict['gt_scores'].sum(dim=1).mean().item()
             reward_tensor += self.config.verifier.reward_coef * reward_tensor_dict['gt_scores']
@@ -112,7 +112,7 @@ def main(config):
             with open(str(config.trainer.runtime_env), 'r') as f:
                 runtime_env = json.load(f)
             runtime_env['env_vars'].update({"WANDB_API_KEY": api_key})
-            runtime_env['env_vars'].update({"RAY_DEBUG": "1"})
+            runtime_env['env_vars'].update({"RAY_DEBUG": "1", 'TOKENIZERS_PARALLELISM': 'true', 'NCCL_DEBUG': 'WARN', "TORCH_USE_CUDA_DSA": "1", "CUDA_LAUNCH_BLOCKING": "1"})
             print(runtime_env)
             ray.init(
                 runtime_env=runtime_env, 
@@ -120,7 +120,7 @@ def main(config):
             )
             
         else:
-            runtime_env = {'env_vars': {'TOKENIZERS_PARALLELISM': 'true', 'NCCL_DEBUG': 'WARN'}}
+            runtime_env = {'env_vars': {'TOKENIZERS_PARALLELISM': 'true', 'NCCL_DEBUG': 'WARN', "TORCH_USE_CUDA_DSA": "1", "CUDA_LAUNCH_BLOCKING": "1"}}
             runtime_env['env_vars'].update({"WANDB_API_KEY": api_key})
             runtime_env['env_vars'].update({"RAY_DEBUG": "1"})
             print(runtime_env)

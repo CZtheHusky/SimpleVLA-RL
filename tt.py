@@ -1,18 +1,19 @@
-traj_len = 148
-traj_batch = 30
-traj_split_num = traj_len // traj_batch
+from transformers import AutoModelForCausalLM, AutoTokenizer
+local_path = "/mnt/nfs_68/caozhe/workspace/vlav-project/maniskill_stack_cubes_dual/internvl2-2b/v0-20250729-171130/checkpoint-640"
 
+tokenizer = AutoTokenizer.from_pretrained(local_path, trust_remote_code=True)
+model     = AutoModelForCausalLM.from_pretrained(local_path, trust_remote_code=True)
 
-for i in range(0, traj_len, traj_batch):
-    print(i)
+# 简单测试 prefix_allowed_tokens_fn
+def dummy_fn(batch_id, input_ids):
+    # 总是只允许 [0] 这个 token
+    return [0]
 
-
-import torch
-
-bs = 2
-length = 10
-desired = 12
-generation_output = torch.ones([bs, length])
-print(generation_output.shape)
-generation_output = torch.concatenate([generation_output, torch.zeros([*generation_output.shape[:-1], 2], dtype=generation_output.dtype, device=generation_output.device)], dim=-1)
-print(generation_output.shape)
+input_ids = tokenizer("Hello", return_tensors="pt").input_ids
+out = model.chat(
+    tokenizer,
+    pixel_values=None,
+    prefix_allowed_tokens_fn=dummy_fn,
+    do_sample=False,
+).cuda()
+print(tokenizer.decode(out[0]))

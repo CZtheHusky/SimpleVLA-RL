@@ -361,6 +361,14 @@ class RayTrainer(object):
             }
             self.logger.log(f"validate, before generate_sequences, {gpu_memory()}")
             test_output_gen_batch = self.actor_rollout_wg.generate_sequences(test_batch)
+            try:
+                finish_steps = test_output_gen_batch.batch['finish_step'].cpu().numpy()
+                msg = f"max step: {np.max(finish_steps)} min step: {np.min(finish_steps)} mean step: {np.mean(finish_steps)}"
+                print(msg)
+                self.logger.log(f"validate: {msg}")
+            except Exception as e:
+                print(f"Error: {e}")
+
             self.logger.log(f"validate, after generate_sequences, {gpu_memory()}")
 
             test_batch = test_batch.union(test_output_gen_batch)
@@ -492,9 +500,10 @@ class RayTrainer(object):
                           default_backend=self.config.trainer.logger,
                           local_dir=self.config.trainer.default_local_dir,
                           wandb_mode=self.config.trainer.wandb_mode,
+                          wandb_kwargs=self.config.trainer.wandb_kwargs,
                           config=OmegaConf.to_container(self.config, resolve=True))
 
-        global_steps = 0
+        global_steps = self.config.trainer.get('global_steps', 0)
         dp_size = self.actor_rollout_wg.world_size // self.config.actor_rollout_ref.rollout.tensor_model_parallel_size
         batch_size = self.config.data.train_batch_size
         n_samples = self.config.data.n_samples
@@ -556,6 +565,13 @@ class RayTrainer(object):
                         }
                         self.logger.log(f"Trainer before fit generate_sequences, {gpu_memory()}")
                         gen_batch_output = self.actor_rollout_wg.generate_sequences(prompts=gen_batch)
+                        try:
+                            finish_steps = gen_batch_output.batch['finish_step'].cpu().numpy()
+                            msg = f"max step: {np.max(finish_steps)} min step: {np.min(finish_steps)} mean step: {np.mean(finish_steps)}"
+                            print(msg)
+                            self.logger.log(f"Trainer, fit: {msg}")
+                        except Exception as e:
+                            print(f"Error: {e}")
                         self.logger.log(f"Trainer after fit generate_sequences, {gpu_memory()}")
                         
                         roll_batch = DataProto.concat(batch_lst)
@@ -703,20 +719,20 @@ class RayTrainer(object):
                     logger.log(data=metrics, step=global_steps)
 
                 if self.config.trainer.save_freq > 0 and (global_steps + 1) % self.config.trainer.save_freq == 0:
-                    actor_local_path = os.path.join(self.config.trainer.default_local_dir, 'actor',
+                    actor_local_path = os.path.join(self.config.trainer.default_local_dir, self.dt_flag, 'actor',
                                                     f'global_step_{global_steps}')
                     actor_remote_path = None #if self.config.trainer.default_hdfs_dir is None else os.path.join(
                         # self.config.trainer.default_hdfs_dir, 'actor')
                     self.actor_rollout_wg.save_checkpoint(actor_local_path, actor_remote_path)
 
                     if self.use_critic:
-                        critic_local_path = os.path.join(self.config.trainer.default_local_dir, 'critic',
+                        critic_local_path = os.path.join(self.config.trainer.default_local_dir, self.dt_flag, 'critic',
                                                          f'global_step_{global_steps}')
                         critic_remote_path = None #if self.config.trainer.default_hdfs_dir is None else os.path.join(
                             # self.config.trainer.default_hdfs_dir, 'critic')
                         self.critic_wg.save_checkpoint(critic_local_path, critic_remote_path)
                     if self.use_rm:
-                        prm_local_path = os.path.join(self.config.trainer.default_local_dir, 'prm',
+                        prm_local_path = os.path.join(self.config.trainer.default_local_dir, self.dt_flag, 'prm',
                                                          f'global_step_{global_steps}')
                         prm_remote_path = None #if self.config.trainer.default_hdfs_dir is None else os.path.join(
                             # self.config.trainer.default_hdfs_dir, 'critic')

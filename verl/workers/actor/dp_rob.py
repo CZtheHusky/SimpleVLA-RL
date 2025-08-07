@@ -155,7 +155,7 @@ class RobDataParallelPPOActor(BasePPOActor):
         
             
         response_length = micro_batch['responses'].size(-1) # 7*8
-        self.logger.log(f"BS: {batch_size} TL: {traj_len} TOT: {tot_pad_len} RL: {response_length}")
+        # self.logger.log(f"BS: {batch_size} TL: {traj_len} TOT: {tot_pad_len} RL: {response_length}")
         with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
             input_ids = micro_batch['input_ids']
             attention_mask = micro_batch['attention_mask']
@@ -223,12 +223,9 @@ class RobDataParallelPPOActor(BasePPOActor):
 
             elif self.config.vla == "internvl_chat":
                 split_size = 30
-                n_chunks = (traj_len * batch_size + split_size - 1) // split_size
-                # print(input_ids.shape, attention_mask.shape, pixel_values.shape, responses.shape)
-                id_chunks = input_ids_unpad.chunk(n_chunks, dim=0)
-                attn_chunks = attention_mask_unpad.chunk(n_chunks, dim=0)
-                pv_chunks = pixel_values.chunk(n_chunks, dim=0)
-
+                id_chunks   = input_ids_unpad.split(split_size, dim=0)
+                attn_chunks = attention_mask_unpad.split(split_size, dim=0)
+                pv_chunks   = pixel_values.split(split_size, dim=0)
                 logits_list = []
                 for id_ch, attn_ch, pv_ch in zip(id_chunks, attn_chunks, pv_chunks):
                     pv_ch = pv_ch.reshape(-1, *pv_ch.shape[-3:])  # Flatten the batch dimension
@@ -422,12 +419,9 @@ class RobDataParallelPPOActor(BasePPOActor):
                 # if not consistent_shape:
                     # self.logger.log(f"_forward_micro_batch_entropy: warning: input_ids has inconsistent shape after removing padding, valid_len: {valid_len} max_start: {max_start}, this may cause issues in internvl_chat")
                 split_size = 30
-                n_chunks = (traj_len * batch_size + split_size - 1) // split_size
-                # print(input_ids.shape, attention_mask.shape, pixel_values.shape, responses.shape)
-                id_chunks = input_ids_unpad.chunk(n_chunks, dim=0)
-                attn_chunks = attention_mask_unpad.chunk(n_chunks, dim=0)
-                pv_chunks = pixel_values.chunk(n_chunks, dim=0)
-
+                id_chunks   = input_ids_unpad.split(split_size, dim=0)
+                attn_chunks = attention_mask_unpad.split(split_size, dim=0)
+                pv_chunks   = pixel_values.split(split_size, dim=0)
                 logits_list = []
                 for id_ch, attn_ch, pv_ch in zip(id_chunks, attn_chunks, pv_chunks):
                     pv_ch = pv_ch.reshape(-1, *pv_ch.shape[-3:])  # Flatten the batch dimension
@@ -505,7 +499,7 @@ class RobDataParallelPPOActor(BasePPOActor):
             micro_batches = batch.split(micro_batch_size)
 
         log_probs_lst = []
-        self.logger.log(f"Current GPU memory usage, before _forward_micro_batch: {gpu_memory()}")
+        # self.logger.log(f"Current GPU memory usage, before _forward_micro_batch: {gpu_memory()}")
         for micro_batch in micro_batches:
             # log current gpu memory
             with torch.no_grad():
@@ -537,7 +531,7 @@ class RobDataParallelPPOActor(BasePPOActor):
         # See PPO paper for details. https://arxiv.org/abs/1707.06347
         dataloader = batch.split(self.config.ppo_mini_batch_size)
         metrics = {}
-        self.logger.log(f"Current GPU memory usage, before update_policy: {gpu_memory()}")
+        # self.logger.log(f"Current GPU memory usage, before update_policy: {gpu_memory()}")
         for batch_idx, data in enumerate(dataloader):
             # split batch into micro_batches
             mini_batch = data
@@ -660,8 +654,8 @@ class RobDataParallelPPOActor(BasePPOActor):
         # See PPO paper for details. https://arxiv.org/abs/1707.06347
         dataloader = batch.split(self.config.ppo_mini_batch_size)
         metrics = {}
-        self.logger.log(f"Current GPU memory usage, before update_policy: {gpu_memory()}")
-        # if self.rank == 0: breakpoint()
+        # self.logger.log(f"Current GPU memory usage, before update_policy: {gpu_memory()}")
+        # breakpoint()
         for batch_idx, data in enumerate(dataloader):
             # split batch into micro_batches
             mini_batch = data
@@ -719,11 +713,12 @@ class RobDataParallelPPOActor(BasePPOActor):
                 
                 # assert traj_len % self.config.traj_mini_batch_size == 0, f"traj_len {traj_len} must be divisible by traj_mini_batch_size {self.config.traj_mini_batch_size}"
                 # traj_split_num = int(traj_len / self.config.traj_mini_batch_size)
-                n_chunks = (traj_len * batch_size + self.config.traj_mini_batch_size - 1) // self.config.traj_mini_batch_size
-                id_chunks = input_ids.chunk(n_chunks, dim=0)
-                attn_chunks = attention_mask.chunk(n_chunks, dim=0)
-                pv_chunks = pixel_values.chunk(n_chunks, dim=0)
-                resp_chunks = responses.chunk(n_chunks, dim=0)
+                # n_chunks = (traj_len * batch_size + self.config.traj_mini_batch_size - 1) // self.config.traj_mini_batch_size
+                split_size = self.config.traj_mini_batch_size
+                id_chunks   = input_ids.split(split_size, dim=0)
+                attn_chunks = attention_mask.split(split_size, dim=0)
+                pv_chunks   = pixel_values.split(split_size, dim=0)
+                resp_chunks = responses.split(split_size, dim=0)
                 # B L -> B * L
                 # if self.rank == 0: breakpoint()
                 for i, id_ch, attn_ch, pv_ch, res_ch in zip(range(0, traj_len, self.config.traj_mini_batch_size), id_chunks, attn_chunks, pv_chunks, resp_chunks):

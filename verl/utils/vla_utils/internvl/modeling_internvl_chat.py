@@ -108,7 +108,7 @@ class InternVLChatModel(PreTrainedModel):
         self.allow_list = None
         
 
-    def set_action_allowed_fn(self, allow_list):
+    def set_action_allowed_list(self, allow_list):
         # SIGNS = [' +', ' -', '|', '{', '}', ' ']
         # numbers = list(range(0, 1000))
         # # tokenizer = AutoTokenizer.from_pretrained(script_dir, trust_remote_code=True, use_fast=False)

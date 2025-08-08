@@ -165,7 +165,7 @@ def main_task(config):
 
     else:
         assert config.actor_rollout_ref.actor.strategy == config.critic.strategy
-        from verl.workers.dp_workers import CriticWorker, RobActorRolloutRefWorker
+        from verl.workers.ddp_workers import CriticWorker, RobActorRolloutRefWorker
         from verl.single_controller.ray import RayWorkerGroup
         ray_worker_group_cls = RayWorkerGroup
         

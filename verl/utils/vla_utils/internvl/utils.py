@@ -5,7 +5,103 @@ from typing import Tuple
 from PIL import Image
 import numpy as np
 import torch
+from transformers.generation.logits_process import PrefixConstrainedLogitsProcessor, LogitsProcessor
+import math
+from transformers import LogitsProcessorList
 
+class SafePrefixConstrainedLogitsProcessor(PrefixConstrainedLogitsProcessor):
+    def __call__(self, input_ids, scores):
+        if input_ids.shape[-1] == 0:
+            mask = torch.full_like(scores, -math.inf)
+            batch_id = 0
+            sent = input_ids[batch_id]
+            prefix_allowed_tokens = self._prefix_allowed_tokens_fn(batch_id, sent)
+            mask[..., prefix_allowed_tokens] = 0.0
+            return scores + mask
+        return super().__call__(input_ids, scores)
+
+def generate_prefix_fn_legacy(numbers_list, start_list, end_list, connect_list):
+
+    def prefix_allowed_tokens_fn(batch_id, input_ids):
+        if input_ids.shape[-1] == 14:
+            return end_list
+        if input_ids.shape[-1] == 0:
+            return start_list
+        elif input_ids.shape[-1] % 2 == 1:
+            return numbers_list
+        elif input_ids.shape[-1] % 2 == 0:
+            return connect_list
+    return prefix_allowed_tokens_fn
+
+def generate_prefix_fn(numbers_list, symbols_list):
+    def prefix_allowed_tokens_fn(batch_id, input_ids):
+        if input_ids.shape[-1] % 2 == 0:
+            return symbols_list
+        elif input_ids.shape[-1] % 2 == 1:
+            return numbers_list
+    return prefix_allowed_tokens_fn
+
+
+def prepare_logits_processor(is_legacy, tokenizer):
+    numbers = list(range(0, 1000))
+    processor_list = LogitsProcessorList([])
+    print("Setting Generation Control")
+    if is_legacy:
+        print("Using action pattern: {-1 0 0 0 0 0 1}")
+        print("Warning: This is a legacy action pattern, for horizon 1 only.")
+        start_list = []
+        end_list = []
+        connect_list = []
+        numbers_list = []
+        start_sign = ["{", '{-',]
+        end_sign = ["}"]
+        connect_sign = [" ", " -"]
+        for str_ in start_sign:
+            toks = tokenizer.tokenize(str_)
+            assert len(toks) == 1
+            start_list.append(tokenizer.convert_tokens_to_ids(toks)[0])
+        for str_ in end_sign:
+            toks = tokenizer.tokenize(str_)
+            assert len(toks) == 1
+            end_list.append(tokenizer.convert_tokens_to_ids(toks)[0])
+        for str_ in connect_sign:
+            toks = tokenizer.tokenize(str_)
+            assert len(toks) == 1
+            connect_list.append(tokenizer.convert_tokens_to_ids(toks)[0])
+        for str_ in numbers:
+            toks = tokenizer.tokenize(str(str_))
+            assert len(toks) == 1
+            numbers_list.append(tokenizer.convert_tokens_to_ids(toks)[0])
+        prefix_processor = SafePrefixConstrainedLogitsProcessor(
+                prefix_allowed_tokens_fn=generate_prefix_fn_legacy(numbers_list, start_list, end_list, connect_list),
+                num_beams=1,
+            )
+        processor_list = LogitsProcessorList([
+            prefix_processor,
+        ])
+        valid_list = start_list + end_list + connect_list + numbers_list
+    else:
+        print("Using action pattern: 0 0 0 0 0 0 1")
+        connect_list = []
+        numbers_list = []
+        connect_sign = [" ", " -"]
+        for str_ in connect_sign:
+            toks = tokenizer.tokenize(str_)
+            assert len(toks) == 1
+            connect_list.append(tokenizer.convert_tokens_to_ids(toks)[0])
+        for str_ in numbers:
+            toks = tokenizer.tokenize(str(str_))
+            assert len(toks) == 1
+            numbers_list.append(tokenizer.convert_tokens_to_ids(toks)[0])
+        prefix_processor = SafePrefixConstrainedLogitsProcessor(
+                prefix_allowed_tokens_fn=generate_prefix_fn(numbers_list, connect_list),
+                num_beams=1,
+            )
+        processor_list = LogitsProcessorList([
+            prefix_processor,
+        ])
+        valid_list = numbers_list + connect_list
+    return processor_list, valid_list
 
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)

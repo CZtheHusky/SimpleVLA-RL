@@ -37,13 +37,16 @@ def mask_logits_with_allow_list(logits: torch.FloatTensor,
     logits: Tensor[..., vocab_size]
     allow_list: 允许的 token id 列表
     """
-    vocab_size = logits.size(-1)
-    # 构造一个 shape=(vocab_size,) 的 mask，默认都是 -inf
-    mask = torch.full((vocab_size,), float('-inf'), device=device, dtype=logits.dtype)
-    # 把允许的那些位置设为 0
-    mask[allow_list] = 0.0
-    # 广播加到 logits 上：allowed 的 logits +0，不允许的 +(-inf)
-    return logits + mask
+    if allow_list is not None:
+        vocab_size = logits.size(-1)
+        # 构造一个 shape=(vocab_size,) 的 mask，默认都是 -inf
+        mask = torch.full((vocab_size,), float('-inf'), device=device, dtype=logits.dtype)
+        # 把允许的那些位置设为 0
+        mask[allow_list] = 0.0
+        # 广播加到 logits 上：allowed 的 logits +0，不允许的 +(-inf)
+        return logits + mask
+    else:
+        return logits
 
 def version_cmp(v1, v2, op='eq'):
     import operator
@@ -71,11 +74,7 @@ class InternVLChatModel(PreTrainedModel):
         self.num_image_token = int((image_size // patch_size) ** 2 * (config.downsample_ratio ** 2))
         self.downsample_ratio = config.downsample_ratio
         self.ps_version = config.ps_version
-        # with open(os.path.join(os.path.dirname(__file__), 'added_tokens.json'), 'r') as f:
-        #     self.added_tokens = json.load(f)
-        # self.img_context_token_id = self.added_tokens['<IMG_CONTEXT>']
         self.img_context_token_id = 92546
-
         logger.info(f'num_image_token: {self.num_image_token}')
         logger.info(f'ps_version: {self.ps_version}')
         if vision_model is not None:
@@ -104,24 +103,15 @@ class InternVLChatModel(PreTrainedModel):
 
         self.conv_template = get_conv_template(self.template)
         self.system_message = self.conv_template.system_message
-        self.action_allowed_fn = None
         self.allow_list = None
+        self._action_generation_config = {}
         
 
-    def set_action_allowed_fn(self, allow_list):
-        # SIGNS = [' +', ' -', '|', '{', '}', ' ']
-        # numbers = list(range(0, 1000))
-        # # tokenizer = AutoTokenizer.from_pretrained(script_dir, trust_remote_code=True, use_fast=False)
-        # allow_list = []
-        # for str_ in SIGNS:
-        #     toks = tokenizer.tokenize(str_)
-        #     assert len(toks) == 1
-        #     allow_list.append(tokenizer.convert_tokens_to_ids(toks)[0])
-        # for str_ in numbers:
-        #     toks = tokenizer.tokenize(str(str_))
-        #     assert len(toks) == 1
-        #     allow_list.append(tokenizer.convert_tokens_to_ids(toks)[0])
+    def set_action_allowed_list(self, allow_list):
         self.allow_list = allow_list
+        
+    def set_action_generation_config(self, generation_config: dict):
+        self._action_generation_config = generation_config
 
 
     def forward(
@@ -418,6 +408,7 @@ class InternVLChatModel(PreTrainedModel):
             return_dict: Optional[bool] = None,
             **generate_kwargs,
     ) -> torch.LongTensor:
+        generate_kwargs.update(self._action_generation_config)
         if pixel_values is not None:
             if visual_features is not None:
                 vit_embeds = visual_features

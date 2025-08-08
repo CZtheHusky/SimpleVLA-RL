@@ -756,7 +756,7 @@ class RobDataParallelPPOActor(BasePPOActor):
                     loss_info['actor/pg_clipfrac'] = loss_info['actor/pg_clipfrac'] + pg_clipfrac.detach().item()
                     loss_info['actor/ppo_kl'] = loss_info['actor/ppo_kl'] +  ppo_kl.detach().item()
                 append_to_dict(metrics, loss_info)
-            # self.logger.log(f"after micro batch update: {gpu_memory()}")
+            self.logger.log(f"before optimizer: {gpu_memory()}")
             grad_norm = self._optimizer_step()
             self.logger.log(f"after _optimizer_step: {gpu_memory()}")
             data = {'actor/grad_norm': grad_norm.detach().item()}

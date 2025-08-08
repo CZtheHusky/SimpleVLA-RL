@@ -564,6 +564,7 @@ class RayTrainer(object):
                             'pad_token_id': self.tokenizer.pad_token_id,
                         }
                         self.logger.log(f"Trainer before fit generate_sequences, {gpu_memory()}")
+                        # breakpoint()
                         gen_batch_output = self.actor_rollout_wg.generate_sequences(prompts=gen_batch)
                         try:
                             finish_steps = gen_batch_output.batch['finish_step'].cpu().numpy()

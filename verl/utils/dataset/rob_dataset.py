@@ -143,7 +143,7 @@ class MANISKILL_Dataset(Dataset):
         else:
             self.consistent = False
         task_descriptions = {
-            "StackCube-v1": "stack the red cube on top of the green one",
+            "StackCube-v1": "stack all the cubes",
         }
         for env_seed in env_seeds:
             for task_id in task_ids:

@@ -37,7 +37,7 @@ class EnvActor:
         self.finished = np.zeros(len(env_unique_ids), dtype=bool)
         self.finish_step = np.zeros(len(env_unique_ids), dtype=int)
         # task_file_names = [f"{env_ids[venv_index]}_task_{env_unique_ids[venv_index]}_uid_{global_steps}" for venv_index in range(len(env_unique_ids))]
-        task_file_names = {venv_index: f"{global_steps}_{self.pid}_{env_ids[venv_index].split('-')[0]}_{env_unique_ids[venv_index]}" for venv_index in range(len(env_unique_ids))}
+        task_file_names = {venv_index: f"{global_steps}_{self.pid}_{venv_index}_{env_ids[venv_index].split('-')[0]}_{env_unique_ids[venv_index]}" for venv_index in range(len(env_unique_ids))}
         try:
             if self.env is not None and (self.env_ids[0] != env_ids[0] or len(self.env_unique_ids) != len(env_unique_ids)):
                 # reinit the env with new env_ids and env_unique_ids
@@ -90,6 +90,7 @@ class EnvActor:
                 obs = self.process_obs(obs)
                 terminated = terminated.cpu().numpy()
                 self.finished = np.logical_or(self.finished, terminated)
+                # self.finished = np.random.uniform(size=self.num_envs) <= 0.01
                 self.finish_step += 1
                 valid_images = None
                 if self.is_valid:
@@ -109,8 +110,8 @@ class EnvActor:
                 return {'error': f"{type(e).__name__}: {e}\n{traceback.format_exc()}"}
             return {
                 'obs': obs,
-                'complete': self.finished,
-                'finish_step': self.finish_step,
+                'complete': self.finished.copy(),
+                'finish_step': self.finish_step.copy(),
                 'valid_images': images
             }
         else:
@@ -145,8 +146,8 @@ class EnvActor:
                 return {'error': f"{type(e).__name__}: {e}\n{traceback.format_exc()}"}
             return {
                 'obs': obs,
-                'complete': self.finished,
-                'finish_step': self.finish_step,
+                'complete': self.finished.copy(),
+                'finish_step': self.finish_step.copy(),
                 'valid_images': images,
             }
 

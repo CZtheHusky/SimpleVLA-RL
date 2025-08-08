@@ -16,7 +16,6 @@ Rollout with huggingface models.
 TODO: refactor this class. Currently, it will hang when using FSDP HybridShard. We should actually create a single GPU model.
 Then, get full state_dict and bind the state_dict to the single GPU model. Then, use the single GPU model to perform generation.
 """
-import contextlib
 import torch
 import torch.distributed
 from tensordict import TensorDict
@@ -54,9 +53,7 @@ from verl.workers.rollout.env_workers.libero_env_worker import center_crop_image
 import ray
 import os
 from concurrent.futures import ThreadPoolExecutor, wait
-from transformers import LogitsProcessorList, GenerationConfig
-from transformers.generation.logits_process import PrefixConstrainedLogitsProcessor, LogitsProcessor
-
+from transformers import GenerationConfig
 
 
 __all__ = ['RobHFRollout']
@@ -69,35 +66,45 @@ OPENVLA_V01_SYSTEM_PROMPT = (
 class ENV_TYPE(Enum):
     VENV = 0
     SINGLE_ENV = 1
-
-class SafePrefixConstrainedLogitsProcessor(PrefixConstrainedLogitsProcessor):
-    def __call__(self, input_ids, scores):
-        if input_ids.shape[-1] == 0:
-            return scores
-        return super().__call__(input_ids, scores)
-
-class AllowListLogitsProcessor(LogitsProcessor):
-    def __init__(self, allow_list):
-        mask = torch.full((92553,), float('-inf'))
-        mask[allow_list] = 0.0
-        self.mask = mask
-        
-    def __call__(self, input_ids, scores):
-        return scores + self.mask.to(scores.device)
     
-def generate_prefix_fn(numbers_list, symbols_list):
-    numbers_set = set(numbers_list)
-    symbols_set = set(symbols_list)
-    def prefix_allowed_tokens_fn(batch_id, input_ids):
-        if input_ids[-1].item() in numbers_set:
-            return symbols_list
-        elif input_ids[-1].item() in symbols_set:
-            return numbers_list
-        else:
-            print(f"Last id is either numbers or valid symbols: {input_ids}")
-            return symbols_list + numbers_list
-    return prefix_allowed_tokens_fn
+from PIL import Image
+import numpy as np
 
+def make_grid(imgs: np.ndarray, rows: int, cols: int, name: str = "") -> Image.Image:
+    """
+    将一批小图按指定行列拼成一张大图。
+
+    Args:
+        imgs (np.ndarray): 输入图像数组，shape = (N, H, W, C)，C 通常为 3（RGB）。
+        rows (int): 大图的行数。
+        cols (int): 大图的列数。
+
+    Returns:
+        PIL.Image.Image: 拼接好的大图。
+    """
+    N, H, W, C = imgs.shape
+    if N != rows * cols:
+        raise ValueError(f"图像数量 {N} 与 rows*cols ({rows*cols}) 不一致。")
+
+    # 创建一个空白画布：宽 = cols*W，高 = rows*H
+    grid_img = Image.new('RGB', (cols * W, rows * H))
+
+    # 逐张粘贴
+    for idx in range(N):
+        # 计算目标行列位置
+        row = idx // cols
+        col = idx % cols
+
+        # 从 NumPy 转成 PIL.Image
+        img_array = imgs[idx]
+        # 确保是 uint8，否则转图时会报错
+        img_pil = Image.fromarray(img_array.astype('uint8'), mode='RGB')
+
+        # 粘贴到大图上
+        grid_img.paste(img_pil, (col * W, row * H))
+    grid_img.save(f"debug_test_{name}.jpg")
+    return grid_img
+    
 class RobHFRollout(BaseRollout):
 
     def __init__(self, module: nn.Module, config, dt_flag: str = None, logger=None):
@@ -109,38 +116,13 @@ class RobHFRollout(BaseRollout):
         else:
             self.early_stop = True
         # self.rank = int(os.environ.get("RANK", 0))
+        self.rank = torch.distributed.get_rank()
         self.dt_flag = dt_flag
         self.processor = AutoProcessor.from_pretrained(config.pretrained_checkpoint, trust_remote_code=True)
         if config.vla == "internvl_chat":
-            SIGNS = [' +', ' -', '|', '{', '}', ' ', '-', '{-']
-            numbers = list(range(0, 1000))
-            # tokenizer = AutoTokenizer.from_pretrained(script_dir, trust_remote_code=True, use_fast=False)
-            symbols_list = []
-            numbers_list = []
-            for str_ in SIGNS:
-                toks = self.processor.tokenize(str_)
-                assert len(toks) == 1
-                symbols_list.append(self.processor.convert_tokens_to_ids(toks)[0])
-            for str_ in numbers:
-                toks = self.processor.tokenize(str(str_))
-                assert len(toks) == 1
-                numbers_list.append(self.processor.convert_tokens_to_ids(toks)[0])
-            # symbols_list.append(self.processor.eos_token_id)
-
-            prefix_processor = SafePrefixConstrainedLogitsProcessor(
-                    prefix_allowed_tokens_fn=generate_prefix_fn(numbers_list, symbols_list),
-                    num_beams=1,
-                )
-            logits_processor = AllowListLogitsProcessor(numbers_list +  symbols_list)
-
-            processor_list = LogitsProcessorList([
-                prefix_processor,
-                logits_processor,
-            ])
-
             self.response_length = config.action_token_len * config.action_chunks_len
-            self.generation_config = dict(max_new_tokens=config.action_token_len * config.action_chunks_len, do_sample=config.do_sample, logits_processor=processor_list)
-            self.module.set_action_allowed_fn(symbols_list + numbers_list)
+            self.generation_config = dict(max_new_tokens=config.action_token_len * config.action_chunks_len, do_sample=config.do_sample)
+            
         self.vla_preprocess()
         self.process_kwargs = {}
         self.logger = logger
@@ -174,9 +156,12 @@ class RobHFRollout(BaseRollout):
             self.env_type = ENV_TYPE.SINGLE_ENV
             from verl.workers.rollout.env_workers.libero_env_worker import env_worker
         self.env_worker = env_worker
-        rollout_dir = os.path.join("rollouts", config.experiment_name, dt_flag)
+        rollout_dir = os.path.join("rollouts", config.experiment_name, dt_flag, 'valid')
         os.makedirs(rollout_dir, exist_ok=True)
         self.rollout_dir = rollout_dir
+        train_rollout_dir = os.path.join("rollouts", config.experiment_name, dt_flag, 'train')
+        os.makedirs(train_rollout_dir, exist_ok=True)
+        self.train_rollout_dir = train_rollout_dir
         # self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=8)
         self.executor = ThreadPoolExecutor(max_workers=8)
         self.futures = []
@@ -322,13 +307,15 @@ class RobHFRollout(BaseRollout):
     def _venv_generate_minibatch(self, prompts):
         # self.logger.log(f"start _venv_generate_minibatch, {gpu_memory()}")
         self.module.eval()
+        # if torch.distributed.get_rank() == 0: breakpoint()
         meta_info = prompts.meta_info
         n_samples = meta_info.get('n_samples', 1)
         env_unique_id = prompts.batch['env_unique_id'].repeat_interleave(n_samples, dim=0)
         task_suite_name = prompts.non_tensor_batch['task_suite_name']
         task_instruction = np.repeat(prompts.non_tensor_batch['task_instruction'], n_samples)
         env_id = np.repeat(prompts.non_tensor_batch['env_id'], n_samples)
-        is_valid = meta_info.get('n_samples') is None
+        is_training = meta_info.get('n_samples') is None
+        is_valid = True
         global_steps = meta_info.get('global_steps', 0) if is_valid else 0
         # infos_print = f"-------------------------------------------------\nenv_unique_id: {prompts.batch['env_unique_id']}\nshape: {prompts.batch['env_unique_id'].shape}\ntask_instruction: {prompts.non_tensor_batch['task_instruction']}\ntask_suite_name: {task_suite_name}\nenv_id: {prompts.non_tensor_batch['env_id']}\nglobal_steps: {global_steps}\nEnv_id: {env_id[0]}\nNum of envs: {len(env_unique_id.cpu().numpy().squeeze(1))}\nis_valid: {is_valid}\n-------------------------------------------------"
         # print(infos_print)
@@ -348,6 +335,7 @@ class RobHFRollout(BaseRollout):
         valid_video = defaultdict(list)
         task_instructions = init_data["task_instructions"]
         inputs = init_data['obs']
+        # make_grid(inputs['sensor_data']['base_camera']['rgb'], 4, 8, global_steps)
         task_records = {
             "complete": init_data['complete'],
             "finish_step": init_data['finish_step'],
@@ -387,11 +375,12 @@ class RobHFRollout(BaseRollout):
             else:
                 vla_output = tmp_vla_output
                 vec_action, string_response = tmp_vla_output["action"]
+            # must clone all the tensors or else the inplace change above would ruin all your fucking effort!!!!!
             step_data = {
-                    "responses": vla_output["responses"],
-                    "input_ids": vla_output["input_ids"],
-                    "attention_mask": vla_output["attention_mask"],
-                    "pixel_values": vla_output["pixel_values"],
+                    "responses": vla_output["responses"].clone(),
+                    "input_ids": vla_output["input_ids"].clone(),
+                    "attention_mask": vla_output["attention_mask"].clone(),
+                    "pixel_values": vla_output["pixel_values"].clone(),
                 }
             vla_history.append(step_data)
             output = self.env_actor.step((vec_action, string_response))
@@ -405,8 +394,6 @@ class RobHFRollout(BaseRollout):
                     task_records['finish_step'][venv_index] = finish_step[venv_index]
                     if is_valid:
                         valid_video[venv_index].extend(output['valid_images'][venv_index])
-                # else:
-                    # print(f"env_id: {venv_index} is already done, finish_step: {task_records[venv_index]}")
             inputs = output['obs']
             step += self.horizon
         desired_steps = (max_steps + self.horizon - 1) // self.horizon
@@ -430,13 +417,7 @@ class RobHFRollout(BaseRollout):
                     task_file,
                     complete,
                 )      
-                self.futures.append(future)     
-                # save_rollout_video(
-                #     images,
-                #     self.rollout_dir,
-                #     task_file,
-                #     complete
-                # )    
+                self.futures.append(future)       
         self.module.train()
         
         batch = {
@@ -611,13 +592,13 @@ class RobHFRollout(BaseRollout):
     
     @torch.no_grad()
     def _generate_one_step(self, prompts: dict, step=None):
+        
         if self.config.vla == "openvla-oft":
             idx = prompts['input_ids']  # (bs, prompt_length)
             attention_mask = prompts['attention_mask']  # left-padded attention_mask
             pixel_values = prompts["pixel_values"]
         
         
-            param_ctx = contextlib.nullcontext()
 
             # make sampling args can be overriden by inputs
             do_sample = prompts.get('do_sample', self.config.do_sample)
@@ -627,22 +608,15 @@ class RobHFRollout(BaseRollout):
 
             #generation_config = GenerationConfig(temperature=temperature, top_p=top_p, top_k=top_k)
 
-            if isinstance(self.module, FSDP):
-                # recurse need to set to False according to https://github.com/pytorch/pytorch/issues/100069
-                param_ctx = FSDP.summon_full_params(self.module, writeback=False, recurse=False)
-            else:
-                param_ctx = contextlib.nullcontext()
-            
-            with param_ctx:
-                with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
-                    actions, response = self.module.generate_action_verl(
-                        input_ids=idx,
-                        pixel_values=pixel_values,
-                        attention_mask=attention_mask,
-                        padding_idx = self.processor.tokenizer.pad_token_id,
-                        do_sample=do_sample,
-                        unnorm_key=self.config.unnorm_key,
-                        temperature=temperature, )
+            with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
+                actions, response = self.module.generate_action_verl(
+                    input_ids=idx,
+                    pixel_values=pixel_values,
+                    attention_mask=attention_mask,
+                    padding_idx = self.processor.tokenizer.pad_token_id,
+                    do_sample=do_sample,
+                    unnorm_key=self.config.unnorm_key,
+                    temperature=temperature, )
             
             
             assert self.processor.tokenizer.pad_token_id is not None
@@ -681,7 +655,6 @@ class RobHFRollout(BaseRollout):
             batch_size = idx.size(0)
             prompt_length = idx.size(1)
             #self.module.eval()
-            param_ctx = contextlib.nullcontext()
 
             do_sample = prompts.get('do_sample', self.config.do_sample)
             response_length =  self.module.get_action_dim(self.config.unnorm_key)
@@ -693,30 +666,21 @@ class RobHFRollout(BaseRollout):
 
             temperature = prompts.get('temperature', self.config.temperature)
             generation_config = GenerationConfig(temperature=temperature, top_p=top_p, top_k=top_k)
-
-            if isinstance(self.module, FSDP):
-                # recurse need to set to False according to https://github.com/pytorch/pytorch/issues/100069
-                param_ctx = FSDP.summon_full_params(self.module, writeback=False, recurse=False)
-            else:
-                param_ctx = contextlib.nullcontext()
-            
-            with param_ctx:
-                with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
-                    
-                    output = self.module.generate(
-                        input_ids=idx,
-                        pixel_values=pixel_values,
-                        attention_mask=attention_mask,
-                        do_sample=do_sample,
-                        max_new_tokens=response_length,
-                        # max_length=max_length,
-                        eos_token_id=eos_token_id,
-                        pad_token_id=pad_token_id,
-                        generation_config=generation_config,
-                        # renormalize_logits=True,
-                        output_scores=False,  # this is potentially very large
-                        return_dict_in_generate=True,
-                        use_cache=True)
+            with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
+                output = self.module.generate(
+                    input_ids=idx,
+                    pixel_values=pixel_values,
+                    attention_mask=attention_mask,
+                    do_sample=do_sample,
+                    max_new_tokens=response_length,
+                    # max_length=max_length,
+                    eos_token_id=eos_token_id,
+                    pad_token_id=pad_token_id,
+                    generation_config=generation_config,
+                    # renormalize_logits=True,
+                    output_scores=False,  # this is potentially very large
+                    return_dict_in_generate=True,
+                    use_cache=True)
                     
            
             seq = output.sequences
@@ -813,27 +777,18 @@ class RobHFRollout(BaseRollout):
             input_ids = model_inputs['input_ids'].to(self.module.device)
             attention_mask = model_inputs['attention_mask'].to(self.module.device)
             eos_token_id = tokenizer.convert_tokens_to_ids(template.sep.strip())
-            if isinstance(self.module, FSDP):
-                # recurse need to set to False according to https://github.com/pytorch/pytorch/issues/100069
-                param_ctx = FSDP.summon_full_params(self.module, writeback=False, recurse=False)
-            else:
-                param_ctx = contextlib.nullcontext()
-            # questions_str += f"start inference\nlen inputs: {input_ids.shape}\npixel_values: {pixel_values.shape}"
-            # print(questions_str)
-            # print(f"Input ids: {input_ids.shape}")
-            with param_ctx:
-                with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
-                    pixel_values = pixel_values.to('cuda').to(torch.bfloat16)
-                    generation_output = self.module.generate(
-                        pixel_values=pixel_values,
-                        input_ids=input_ids,
-                        attention_mask=attention_mask,
-                        eos_token_id=eos_token_id,
-                        temperature=temperature,
-                        top_p=top_p,
-                        top_k=top_k,
-                        **self.generation_config,
-                    )
+            with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
+                pixel_values = pixel_values.to('cuda').to(torch.bfloat16)
+                generation_output = self.module.generate(
+                    pixel_values=pixel_values,
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    eos_token_id=eos_token_id,
+                    temperature=temperature,
+                    top_p=top_p,
+                    top_k=top_k,
+                    **self.generation_config,
+                )
             # response_str = f"step: {step} inference done\n"
             full_seq = torch.concatenate((input_ids, generation_output), dim=-1)
             # print(f"full_seq: {full_seq.shape}")

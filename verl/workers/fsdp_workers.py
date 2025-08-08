@@ -23,6 +23,7 @@ import torch
 import torch.distributed
 from omegaconf import DictConfig, open_dict
 from transformers import AutoModelForCausalLM
+import contextlib
 
 from verl.single_controller.base import Worker
 from verl.single_controller.base.decorator import register, Dispatch
@@ -39,6 +40,7 @@ from verl.utils import hf_tokenizer
 from ..trainer.ppo import core_algos
 from verl.utils.py_functional import append_to_dict
 from codetiming import Timer
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 
 
 from peft import LoraConfig, PeftModel, get_peft_model, TaskType
@@ -486,6 +488,16 @@ class RobActorRolloutRefWorker(Worker):
         torch.cuda.empty_cache()
         return output
 
+    def rollout_generate(self, prompts):
+        param_ctx = contextlib.nullcontext()
+        if isinstance(self.rollout.module, FSDP):
+            # recurse need to set to False according to https://github.com/pytorch/pytorch/issues/100069
+            param_ctx = FSDP.summon_full_params(self.module, writeback=False, recurse=False)
+        else:
+            param_ctx = contextlib.nullcontext()
+        with param_ctx:
+            return self.rollout.generate_sequences(prompts=prompts)
+
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
     def generate_sequences(self, prompts):
         prompts = prompts.to('cuda')
@@ -509,7 +521,7 @@ class RobActorRolloutRefWorker(Worker):
         with self.sharding_manager:
             log_gpu_memory_usage('After entering sharding manager', logger=logger)    
             prompts = self.sharding_manager.preprocess_data(prompts)
-            output = self.rollout.generate_sequences(prompts=prompts)
+            output = self.rollout_generate(prompts=prompts)
             log_gpu_memory_usage('After rollout generation', logger=logger)
             # shape: BS * MAX_SEQ_LEN
             output = self.sharding_manager.postprocess_data(output)
@@ -984,6 +996,16 @@ class ActorRolloutRefWorker(Worker):
         torch.distributed.barrier()
         torch.cuda.empty_cache()
         return output
+    
+    def rollout_generate(self, prompts):
+        param_ctx = contextlib.nullcontext()
+        if isinstance(self.rollout.module, FSDP):
+            # recurse need to set to False according to https://github.com/pytorch/pytorch/issues/100069
+            param_ctx = FSDP.summon_full_params(self.module, writeback=False, recurse=False)
+        else:
+            param_ctx = contextlib.nullcontext()
+        with param_ctx:
+            return self.rollout.generate_sequences(prompts=prompts)
 
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
     def generate_sequences(self, prompts: DataProto):
@@ -1004,7 +1026,7 @@ class ActorRolloutRefWorker(Worker):
             log_gpu_memory_usage('After entering sharding manager', logger=logger)
 
             prompts = self.sharding_manager.preprocess_data(prompts)
-            output = self.rollout.generate_sequences(prompts=prompts)
+            output = self.rollout_generate(prompts=prompts)
 
             log_gpu_memory_usage('After rollout generation', logger=logger)
 

@@ -314,8 +314,9 @@ class RobHFRollout(BaseRollout):
         task_suite_name = prompts.non_tensor_batch['task_suite_name']
         task_instruction = np.repeat(prompts.non_tensor_batch['task_instruction'], n_samples)
         env_id = np.repeat(prompts.non_tensor_batch['env_id'], n_samples)
-        is_training = meta_info.get('n_samples') is None
-        is_valid = True
+        is_valid = meta_info.get('n_samples') is None
+        is_training = False
+        # is_valid = True
         global_steps = meta_info.get('global_steps', 0) if is_valid else 0
         # infos_print = f"-------------------------------------------------\nenv_unique_id: {prompts.batch['env_unique_id']}\nshape: {prompts.batch['env_unique_id'].shape}\ntask_instruction: {prompts.non_tensor_batch['task_instruction']}\ntask_suite_name: {task_suite_name}\nenv_id: {prompts.non_tensor_batch['env_id']}\nglobal_steps: {global_steps}\nEnv_id: {env_id[0]}\nNum of envs: {len(env_unique_id.cpu().numpy().squeeze(1))}\nis_valid: {is_valid}\n-------------------------------------------------"
         # print(infos_print)
@@ -413,7 +414,7 @@ class RobHFRollout(BaseRollout):
                 future = self.executor.submit(
                     save_rollout_video,
                     images,
-                    self.rollout_dir,
+                    self.train_rollout_dir if is_training else self.rollout_dir,
                     task_file,
                     complete,
                 )      

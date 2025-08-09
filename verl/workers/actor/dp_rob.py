@@ -749,8 +749,9 @@ class RobDataParallelPPOActor(BasePPOActor):
                     ppo_kl = ppo_kl * response_mask_tmp_sum / response_mask_sum
                     
                     policy_loss = pg_loss / response_mask_sum
+                    policy_with_kl = policy_loss + ppo_kl * 0.01
                     
-                    loss = policy_loss / self.gradient_accumulation
+                    loss = policy_with_kl / self.gradient_accumulation
                     loss.backward()
                     loss_info['actor/pg_loss'] =  loss_info['actor/pg_loss'] + policy_loss.detach().item()
                     loss_info['actor/pg_clipfrac'] = loss_info['actor/pg_clipfrac'] + pg_clipfrac.detach().item()
@@ -758,7 +759,7 @@ class RobDataParallelPPOActor(BasePPOActor):
                 append_to_dict(metrics, loss_info)
             self.logger.log(f"before optimizer: {gpu_memory()}")
             grad_norm = self._optimizer_step()
-            self.logger.log(f"after _optimizer_step: {gpu_memory()}")
+            self.logger.log(f"after _optimizer_step: {gpu_memory()}")   
             data = {'actor/grad_norm': grad_norm.detach().item()}
             append_to_dict(metrics, data)
             torch.cuda.empty_cache()

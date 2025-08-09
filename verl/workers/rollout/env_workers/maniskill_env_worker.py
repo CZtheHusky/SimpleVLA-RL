@@ -50,7 +50,7 @@ class EnvActor:
                     num_envs=len(env_unique_ids),
                     obs_mode="rgb",
                     control_mode="pd_ee_delta_pose",
-                    sensor_configs={'height': 480, 'width': 480},
+                    sensor_configs={'height': 448, 'width': 448},
                     max_episode_steps=max_steps,
                     reward_mode='sparse',
                 )

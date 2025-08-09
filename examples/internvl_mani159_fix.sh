@@ -14,7 +14,7 @@ export RAY_memory_monitor_refresh_ms=0
 export TORCH_NCCL_TIMEOUT=3600
 export RAY_DEDUP_LOGS=0
 PROJECT_NAME='SimpleVLA-RL'
-EXPERIMENT_NAME='debug' 
+EXPERIMENT_NAME='mani_legacy_0.1_with_kl' 
 # For openvla-oft Libero-Long traj1 SFT or traj all SFT models can be find in https://huggingface.co/collections/Haozhan72/simplevla-rl-6833311430cd9df52aeb1f86
 SFT_MODEL_PATH="/mnt/nfs3/caozhe/workspace/SimpleVLA-RL/vlav-project/maniskill_stack_cubes_dual_legacy/internvl2-2b/v0-20250725-182532/checkpoint-1600"
 CKPT_PATH="./ckpts"
@@ -29,7 +29,7 @@ ALIGN_PATH="align.json"
 HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python -m verl.trainer.main_ppo \
     data.task_suite_name=$DATASET_NAME \
     data.n_samples=8 \
-    data.filter_accuracy=False \
+    data.filter_accuracy=True \
     data.accuracy_lower_bound=0.1 \
     data.accuracy_upper_bound=0.9 \
     data.oversample_factor=1 \
@@ -52,8 +52,8 @@ HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python -m verl.trainer.m
     actor_rollout_ref.actor.ppo_micro_batch_size=$NUM_GPUS \
     actor_rollout_ref.actor.use_dynamic_bsz=False \
     actor_rollout_ref.actor.grad_clip=1 \
-    actor_rollout_ref.actor.clip_ratio_high=0.2 \
-    actor_rollout_ref.actor.clip_ratio_low=0.2 \
+    actor_rollout_ref.actor.clip_ratio_high=0.1 \
+    actor_rollout_ref.actor.clip_ratio_low=0.1 \
     actor_rollout_ref.actor.num_images_in_input=2 \
     actor_rollout_ref.actor.traj_mini_batch_size=10 \
     actor_rollout_ref.model.enable_gradient_checkpointing=False \

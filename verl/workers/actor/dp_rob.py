@@ -229,7 +229,6 @@ class RobDataParallelPPOActor(BasePPOActor):
                 logits_list = []
                 for id_ch, attn_ch, pv_ch in zip(id_chunks, attn_chunks, pv_chunks):
                     pv_ch = pv_ch.reshape(-1, *pv_ch.shape[-3:])  # Flatten the batch dimension
-                    # print(id_ch.shape, attn_ch.shape, pv_ch.shape)
                     out = self.actor_module(
                         pixel_values=pv_ch,
                         input_ids=id_ch,
@@ -238,12 +237,10 @@ class RobDataParallelPPOActor(BasePPOActor):
                     )
                     # Extract only the response-length slice and scale
                     lg = out.logits[:, -response_length - 1:-1].div(temperature)
-                    # print(lg.shape)
                     logits_list.append(lg)
 
                 # Concatenate all chunks: shape (B*T, response_length)
                 logits_flat = torch.cat(logits_list, dim=0)
-                # print(logits_flat.shape)
                 # Compute log-probs and entropy
                 log_probs = logprobs_from_logits(logits_flat, responses)
                 entropy = verl_F.entropy_from_logits(logits_flat)
@@ -425,7 +422,6 @@ class RobDataParallelPPOActor(BasePPOActor):
                 logits_list = []
                 for id_ch, attn_ch, pv_ch in zip(id_chunks, attn_chunks, pv_chunks):
                     pv_ch = pv_ch.reshape(-1, *pv_ch.shape[-3:])  # Flatten the batch dimension
-                    # print(id_ch.shape, attn_ch.shape, pv_ch.shape)
                     out = self.actor_module(
                         pixel_values=pv_ch,
                         input_ids=id_ch,
@@ -434,12 +430,10 @@ class RobDataParallelPPOActor(BasePPOActor):
                     )
                     # Extract only the response-length slice and scale
                     lg = out.logits[:, -response_length - 1:-1].div(temperature)
-                    # print(lg.shape)
                     logits_list.append(lg)
 
                 # Concatenate all chunks: shape (B*T, response_length)
                 logits_flat = torch.cat(logits_list, dim=0)
-                # print(logits_flat.shape)
                 # Compute log-probs and entropy
                 entropy = verl_F.entropy_from_logits(logits_flat)
 
@@ -543,9 +537,6 @@ class RobDataParallelPPOActor(BasePPOActor):
                 micro_batches = mini_batch.split(self.config.ppo_micro_batch_size)
 
             self.actor_optimizer.zero_grad()
-            # self.logger.log(f"before _forward_micro_batch_update: {gpu_memory()}")
-            # torch.cuda.empty_cache()
-            # self.logger.log(f"after empty_cache: {gpu_memory()}")
             for test_idx, data in enumerate(micro_batches):
                 data = data.cuda()  # actor device is cpu when using offload
                 responses = data['responses']
@@ -654,8 +645,7 @@ class RobDataParallelPPOActor(BasePPOActor):
         # See PPO paper for details. https://arxiv.org/abs/1707.06347
         dataloader = batch.split(self.config.ppo_mini_batch_size)
         metrics = {}
-        # self.logger.log(f"Current GPU memory usage, before update_policy: {gpu_memory()}")
-        # breakpoint()
+        self.actor_optimizer.zero_grad()
         for batch_idx, data in enumerate(dataloader):
             # split batch into micro_batches
             mini_batch = data
@@ -666,10 +656,6 @@ class RobDataParallelPPOActor(BasePPOActor):
                 # split batch into micro_batches
                 micro_batches = mini_batch.split(self.config.ppo_micro_batch_size)
 
-            self.actor_optimizer.zero_grad()
-            # self.logger.log(f"before _forward_micro_batch_update: {gpu_memory()}")
-            # torch.cuda.empty_cache()
-            # self.logger.log(f"after empty_cache: {gpu_memory()}")
             for test_idx, data in enumerate(micro_batches):
                 data = data.cuda()  # actor device is cpu when using offload
                 responses = data['responses']
@@ -682,6 +668,8 @@ class RobDataParallelPPOActor(BasePPOActor):
                 
                 response_mask_sum = response_mask.sum(axis=None)
 
+
+                # bs traj_len * response_len
                 old_log_prob = data['old_log_probs']
                 advantages = data['advantages']
                 
@@ -699,7 +687,7 @@ class RobDataParallelPPOActor(BasePPOActor):
                 attention_mask = data['attention_mask']
                 pixel_values = data["pixel_values"]
                 responses = data["responses"]
-                
+                # 1 traj_len interact_len -> traj_len interact_len
                 input_ids = input_ids.reshape((batch_size * traj_len,) + input_ids.shape[2:])
                 attention_mask = attention_mask.reshape((batch_size * traj_len,) + attention_mask.shape[2:])
                 pixel_values = pixel_values.reshape((batch_size * traj_len,) + pixel_values.shape[2:])
@@ -711,17 +699,15 @@ class RobDataParallelPPOActor(BasePPOActor):
                     'actor/ppo_kl': 0,
                 }
                 
-                # assert traj_len % self.config.traj_mini_batch_size == 0, f"traj_len {traj_len} must be divisible by traj_mini_batch_size {self.config.traj_mini_batch_size}"
-                # traj_split_num = int(traj_len / self.config.traj_mini_batch_size)
-                # n_chunks = (traj_len * batch_size + self.config.traj_mini_batch_size - 1) // self.config.traj_mini_batch_size
                 split_size = self.config.traj_mini_batch_size
+                # split over traj_len, traj_len interact_len -> [(split_size, interact_len), ....]
                 id_chunks   = input_ids.split(split_size, dim=0)
                 attn_chunks = attention_mask.split(split_size, dim=0)
                 pv_chunks   = pixel_values.split(split_size, dim=0)
                 resp_chunks = responses.split(split_size, dim=0)
                 # B L -> B * L
-                # if self.rank == 0: breakpoint()
                 for i, id_ch, attn_ch, pv_ch, res_ch in zip(range(0, traj_len, self.config.traj_mini_batch_size), id_chunks, attn_chunks, pv_chunks, resp_chunks):
+                    # 1 split_size * response_len
                     entropy, log_prob = self._forward_micro_batch_update(
                         input_ids=id_ch, 
                         attention_mask=attn_ch, 
@@ -757,26 +743,22 @@ class RobDataParallelPPOActor(BasePPOActor):
                     loss_info['actor/ppo_kl'] = loss_info['actor/ppo_kl'] +  ppo_kl.detach().item()
                     loss.backward()
                 append_to_dict(metrics, loss_info)
-                total_ppo_kl = torch.tensor(loss_info['actor/ppo_kl']).cuda()
-                torch.distributed.all_reduce(total_ppo_kl, op=torch.distributed.ReduceOp.AVG)
+                # total_ppo_kl = torch.tensor(loss_info['actor/ppo_kl']).cuda()
+                # torch.distributed.all_reduce(total_ppo_kl, op=torch.distributed.ReduceOp.AVG)
                 # if total_ppo_kl >= 0.5:
                 #     print("Terminating update policy, kl early stop")
                 #     self.logger.log("Terminating update policy, kl early stop")
                 #     self.actor_optimizer.zero_grad()
                 #     break
-            self.logger.log(f"before optimizer: {gpu_memory()}")
-            grad_norm = self._optimizer_step()
-            self.logger.log(f"after _optimizer_step: {gpu_memory()}")   
-            data = {'actor/grad_norm': grad_norm.detach().item()}
-            append_to_dict(metrics, data)
             torch.cuda.empty_cache()
-            # self.logger.log(f"after empty_cache: {gpu_memory()}")
+        self.logger.log(f"before optimizer: {gpu_memory()}")
+        grad_norm = self._optimizer_step()
+        self.logger.log(f"after _optimizer_step: {gpu_memory()}")   
+        data = {'actor/grad_norm': grad_norm.detach().item()}
+        append_to_dict(metrics, data)
         self.actor_optimizer.zero_grad()
-        # self.logger.log(f"after zero_grad: {gpu_memory()}")
         torch.cuda.synchronize()
-        # self.logger.log(f"after synchronize: {gpu_memory()}")
         torch.distributed.barrier()
-        # self.logger.log(f"after barrier: {gpu_memory()}")
         torch.cuda.empty_cache()
         self.logger.log(f"after final empty_cache: {gpu_memory()}")
         return metrics

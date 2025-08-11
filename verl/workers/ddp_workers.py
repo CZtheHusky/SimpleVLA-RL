@@ -74,7 +74,6 @@ class RobActorRolloutRefWorker(Worker):
         world_size = torch.distributed.get_world_size()
         rank = torch.distributed.get_rank()
         self.local_device = self.rank % torch.cuda.device_count()
-        assert rank == self.rank
         self.logger = LocalLogger(log_name=f"{config.rollout.experiment_name}/{dt_flag}/RobActorRolloutRefWorker", world_size=world_size, rank=self._rank)
         self._is_lora = self.config.model.get('lora_rank', 0) > 0
         self.role = role
@@ -134,23 +133,15 @@ class RobActorRolloutRefWorker(Worker):
                 check_model_logic_mismatch(local_path)
             torch.distributed.barrier()
         elif self.config.model.vla == "internvl_chat":
-            # AutoConfig.register('internvl_chat', InternVLChatConfig)
-            # AutoModelForCausalLM.register(InternVLChatConfig, InternVLChatModel)
-            # from verl.utils.internvl_utils import update_auto_map , check_model_logic_mismatch
-            # if self.rank == 0:
-            #     update_auto_map(local_path)
-            #     check_model_logic_mismatch(local_path)
-            # torch.distributed.barrier()
             from verl.utils.internvl_utils import replace_modeling_files
             if self.rank == 0: replace_modeling_files(local_path)
+            torch.distributed.barrier() # prevent other workers init model before modeling files replaced
         
         #add end
 
         # note that we have to create model in fp32. Otherwise, the optimizer is in bf16, which is incorrect
         # TODO(zhangchi.usc1992): 1. support create from random initialized model. 2. Support init with FSDP directly
-        # self.logger.log("tokenizer")
         self.tokenizer = hf_tokenizer(local_path, trust_remote_code=trust_remote_code, model=self.config.model.vla)
-        # self.logger.log("tokenizer done")
         torch_dtype = torch.float32 if self._is_actor else torch.bfloat16
 
         # override model kwargs
@@ -215,9 +206,7 @@ class RobActorRolloutRefWorker(Worker):
                 actor_module.set_action_allowed_list(valid_list)
             actor_module.set_action_generation_config(generation_config)
             
-        # self.logger.log("model done")
         actor_module.to(torch_dtype).cuda(self.local_device)
-        # self.logger.log("model to cuda done")
         if enable_gradient_checkpointing:
             actor_module.gradient_checkpointing_enable()
         # lora add
@@ -235,9 +224,6 @@ class RobActorRolloutRefWorker(Worker):
             actor_module = get_peft_model(actor_module, LoraConfig(**lora_config))  
             actor_module.print_trainable_parameters()
             # lora end
-        # self.logger.log("before barrier")   
-        # torch.distributed.barrier()
-        # self.logger.log("after barrier")
         if self.rank == 0:
             print_model_size(actor_module)
 
@@ -314,15 +300,12 @@ class RobActorRolloutRefWorker(Worker):
                 optim_config = self.config.actor.optim
             else:
                 optim_config = None
-            # self.logger.log("init model optimizer")
-            # self.logger.log(f"cuda: {torch.cuda.is_available()}, device count: {torch.cuda.device_count()}, device name: {torch.cuda.get_device_name(0)}")
             self.actor_module_ddp, self.actor_optimizer, self.actor_lr_scheduler, self.actor_model_config = self._build_model_optimizer(
                 model_path=self.config.model.path,
                 optim_config=optim_config,
                 override_model_config=override_model_config,
                 enable_gradient_checkpointing=self.config.model.get('enable_gradient_checkpointing', False),
                 trust_remote_code=self.config.model.get('trust_remote_code', False)) #
-            # self.logger.log("model optimizer done")
             self.actor_module = self.actor_module_ddp.module
 
         # load from checkpoint
@@ -361,9 +344,6 @@ class RobActorRolloutRefWorker(Worker):
 
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
     def update_actor(self, data: DataProto):
-        # self.logger.log(f"update_actor, before empty cache, {gpu_memory()}")
-        # torch.cuda.empty_cache()
-        # self.logger.log(f"update_actor, after empty cache, {gpu_memory()}")
 
         #data = data.to('cuda')
         assert self._is_actor
@@ -390,9 +370,6 @@ class RobActorRolloutRefWorker(Worker):
 
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
     def compute_entropy(self, data: DataProto):
-        # self.logger.log(f"compute_entropy, before empty cache, {gpu_memory()}")
-        # torch.cuda.empty_cache()
-        # self.logger.log(f"compute_entropy, after empty cache, {gpu_memory()}")
         
         data = data.to('cuda')
 
@@ -465,11 +442,8 @@ class RobActorRolloutRefWorker(Worker):
         self.logger.log(f"generate_sequences, move to cpu: {gpu_memory()}")
 
         # clear kv cache
-        # self.logger.log(f"before synchronize and barrier {gpu_memory()}")
         torch.cuda.synchronize()
-        # self.logger.log(f"after synchronize {gpu_memory()}")
         torch.distributed.barrier()
-        # self.logger.log(f"after barrier {gpu_memory()}")
         torch.cuda.empty_cache()
         self.logger.log(f"generate_sequences, after empty cache {gpu_memory()}")
         log_gpu_memory_usage('After recompute log prob', logger=logger)

@@ -655,7 +655,7 @@ class RobDataParallelPPOActor(BasePPOActor):
         dataloader = batch.split(self.config.ppo_mini_batch_size)
         metrics = {}
         # self.logger.log(f"Current GPU memory usage, before update_policy: {gpu_memory()}")
-        # breakpoint()
+        self.actor_optimizer.zero_grad()
         for batch_idx, data in enumerate(dataloader):
             # split batch into micro_batches
             mini_batch = data
@@ -666,10 +666,6 @@ class RobDataParallelPPOActor(BasePPOActor):
                 # split batch into micro_batches
                 micro_batches = mini_batch.split(self.config.ppo_micro_batch_size)
 
-            self.actor_optimizer.zero_grad()
-            # self.logger.log(f"before _forward_micro_batch_update: {gpu_memory()}")
-            # torch.cuda.empty_cache()
-            # self.logger.log(f"after empty_cache: {gpu_memory()}")
             for test_idx, data in enumerate(micro_batches):
                 data = data.cuda()  # actor device is cpu when using offload
                 responses = data['responses']
@@ -729,6 +725,8 @@ class RobDataParallelPPOActor(BasePPOActor):
                         responses=res_ch, 
                         temperature=temperature
                     )
+                    # tmp_entropy, tmp_log_probs = self._forward_micro_batch({"responses": res_ch.unsqueeze(1), "input_ids": id_ch.unsqueeze(1), "attention_mask": attn_ch.unsqueeze(1), "pixel_values": pv_ch.unsqueeze(1), "finish_step": torch.ones((1, 1), dtype=id_ch.dtype, device=id_ch.device)}, temperature=1)
+                    # tmp_entropy, tmp_log_probs = tmp_entropy.reshape(1, -1), tmp_log_probs.reshape(1, -1)
                     slice_id = i * self.config.action_token_len * self.config.action_chunks_len
                     next_slice_id = (i + self.config.traj_mini_batch_size) * self.config.action_token_len * self.config.action_chunks_len
                     # assert next_slice_id <= old_log_prob.shape[-1], f"next_slice_id {next_slice_id} exceeds old_log_prob size {old_log_prob.shape[-1]}"
@@ -764,19 +762,15 @@ class RobDataParallelPPOActor(BasePPOActor):
                 #     self.logger.log("Terminating update policy, kl early stop")
                 #     self.actor_optimizer.zero_grad()
                 #     break
-            self.logger.log(f"before optimizer: {gpu_memory()}")
-            grad_norm = self._optimizer_step()
-            self.logger.log(f"after _optimizer_step: {gpu_memory()}")   
-            data = {'actor/grad_norm': grad_norm.detach().item()}
-            append_to_dict(metrics, data)
             torch.cuda.empty_cache()
-            # self.logger.log(f"after empty_cache: {gpu_memory()}")
+        self.logger.log(f"before optimizer: {gpu_memory()}")
+        grad_norm = self._optimizer_step()
+        self.logger.log(f"after _optimizer_step: {gpu_memory()}")   
+        data = {'actor/grad_norm': grad_norm.detach().item()}
+        append_to_dict(metrics, data)
         self.actor_optimizer.zero_grad()
-        # self.logger.log(f"after zero_grad: {gpu_memory()}")
         torch.cuda.synchronize()
-        # self.logger.log(f"after synchronize: {gpu_memory()}")
         torch.distributed.barrier()
-        # self.logger.log(f"after barrier: {gpu_memory()}")
         torch.cuda.empty_cache()
         self.logger.log(f"after final empty_cache: {gpu_memory()}")
         return metrics

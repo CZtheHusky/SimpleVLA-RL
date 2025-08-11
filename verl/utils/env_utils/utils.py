@@ -29,6 +29,67 @@ class TaskSuite(Enum):
     GRUTOPIA = 1
     LIBERO = 2
 
+def prepare_mani_init(prompts, max_steps_dict):
+    meta_info = prompts.meta_info
+    n_samples = meta_info.get('n_samples', 1)
+    env_unique_id = prompts.batch['env_unique_id'].repeat_interleave(n_samples, dim=0)
+    task_suite_name = prompts.non_tensor_batch['task_suite_name']
+    task_instruction = np.repeat(prompts.non_tensor_batch['task_instruction'], n_samples)
+    env_id = np.repeat(prompts.non_tensor_batch['env_id'], n_samples)
+    is_valid = meta_info.get('n_samples') is None
+    is_training = False
+    # is_valid = True
+    batch_size = env_unique_id.size(0)
+    max_steps = max_steps_dict[env_id[0]]
+    global_steps = meta_info.get('global_steps', 0) if is_valid else 0
+    extra_batch = {
+        'env_unique_id': env_unique_id.detach().clone(),
+    }
+    return {
+        "env_ids": env_id,
+        "env_unique_ids": env_unique_id.cpu().numpy().squeeze(1),
+        "task_instructions": task_instruction,
+        "is_valid": is_valid,
+        "global_steps": global_steps,
+        "n_samples": n_samples, 
+        "max_steps": max_steps,
+    }, batch_size, is_training, is_valid, max_steps, meta_info, extra_batch
+    
+
+def make_grid(imgs: np.ndarray, rows: int, cols: int, name: str = "") -> Image.Image:
+    """
+    将一批小图按指定行列拼成一张大图。
+
+    Args:
+        imgs (np.ndarray): 输入图像数组，shape = (N, H, W, C)，C 通常为 3（RGB）。
+        rows (int): 大图的行数。
+        cols (int): 大图的列数。
+
+    Returns:
+        PIL.Image.Image: 拼接好的大图。
+    """
+    N, H, W, C = imgs.shape
+    if N != rows * cols:
+        raise ValueError(f"图像数量 {N} 与 rows*cols ({rows*cols}) 不一致。")
+
+    # 创建一个空白画布：宽 = cols*W，高 = rows*H
+    grid_img = Image.new('RGB', (cols * W, rows * H))
+
+    # 逐张粘贴
+    for idx in range(N):
+        # 计算目标行列位置
+        row = idx // cols
+        col = idx % cols
+
+        # 从 NumPy 转成 PIL.Image
+        img_array = imgs[idx]
+        # 确保是 uint8，否则转图时会报错
+        img_pil = Image.fromarray(img_array.astype('uint8'), mode='RGB')
+
+        # 粘贴到大图上
+        grid_img.paste(img_pil, (col * W, row * H))
+    grid_img.save(f"debug_test_{name}.jpg")
+    return grid_img
 
 def parse_action_vectors(s: str):
     results = []

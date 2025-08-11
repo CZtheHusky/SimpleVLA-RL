@@ -48,7 +48,7 @@ import gc
 from multiprocessing import Process, Queue
 from collections import defaultdict
 from enum import Enum
-from verl.utils.env_utils.utils import obs_process, action_decode, TaskSuite
+from verl.utils.env_utils.utils import obs_process, action_decode, TaskSuite, prepare_mani_init
 from verl.workers.rollout.env_workers.libero_env_worker import center_crop_image
 import ray
 import os
@@ -66,44 +66,6 @@ OPENVLA_V01_SYSTEM_PROMPT = (
 class ENV_TYPE(Enum):
     VENV = 0
     SINGLE_ENV = 1
-    
-from PIL import Image
-import numpy as np
-
-def make_grid(imgs: np.ndarray, rows: int, cols: int, name: str = "") -> Image.Image:
-    """
-    将一批小图按指定行列拼成一张大图。
-
-    Args:
-        imgs (np.ndarray): 输入图像数组，shape = (N, H, W, C)，C 通常为 3（RGB）。
-        rows (int): 大图的行数。
-        cols (int): 大图的列数。
-
-    Returns:
-        PIL.Image.Image: 拼接好的大图。
-    """
-    N, H, W, C = imgs.shape
-    if N != rows * cols:
-        raise ValueError(f"图像数量 {N} 与 rows*cols ({rows*cols}) 不一致。")
-
-    # 创建一个空白画布：宽 = cols*W，高 = rows*H
-    grid_img = Image.new('RGB', (cols * W, rows * H))
-
-    # 逐张粘贴
-    for idx in range(N):
-        # 计算目标行列位置
-        row = idx // cols
-        col = idx % cols
-
-        # 从 NumPy 转成 PIL.Image
-        img_array = imgs[idx]
-        # 确保是 uint8，否则转图时会报错
-        img_pil = Image.fromarray(img_array.astype('uint8'), mode='RGB')
-
-        # 粘贴到大图上
-        grid_img.paste(img_pil, (col * W, row * H))
-    grid_img.save(f"debug_test_{name}.jpg")
-    return grid_img
     
 class RobHFRollout(BaseRollout):
 
@@ -305,60 +267,30 @@ class RobHFRollout(BaseRollout):
             return step < max_step
                            
     def _venv_generate_minibatch(self, prompts):
-        # self.logger.log(f"start _venv_generate_minibatch, {gpu_memory()}")
         self.module.eval()
-        # if torch.distributed.get_rank() == 0: breakpoint()
-        meta_info = prompts.meta_info
-        n_samples = meta_info.get('n_samples', 1)
-        env_unique_id = prompts.batch['env_unique_id'].repeat_interleave(n_samples, dim=0)
-        task_suite_name = prompts.non_tensor_batch['task_suite_name']
-        task_instruction = np.repeat(prompts.non_tensor_batch['task_instruction'], n_samples)
-        env_id = np.repeat(prompts.non_tensor_batch['env_id'], n_samples)
-        is_valid = meta_info.get('n_samples') is None
-        is_training = False
-        # is_valid = True
-        global_steps = meta_info.get('global_steps', 0) if is_valid else 0
-        # infos_print = f"-------------------------------------------------\nenv_unique_id: {prompts.batch['env_unique_id']}\nshape: {prompts.batch['env_unique_id'].shape}\ntask_instruction: {prompts.non_tensor_batch['task_instruction']}\ntask_suite_name: {task_suite_name}\nenv_id: {prompts.non_tensor_batch['env_id']}\nglobal_steps: {global_steps}\nEnv_id: {env_id[0]}\nNum of envs: {len(env_unique_id.cpu().numpy().squeeze(1))}\nis_valid: {is_valid}\n-------------------------------------------------"
-        # print(infos_print)
-        max_steps = self.max_steps[env_id[0]]
-        batch_size = env_unique_id.size(0)    # Num of grpo samples
-        # self.logger.log(f"before init venv, {gpu_memory()}")
+        env_init_kwargs, batch_size, is_training, is_valid, max_steps, meta_info, extra_batch = prepare_mani_init(prompts, self.max_steps)
         init_data = self.env_actor.init_venv(
-            env_id,
-            env_unique_id.cpu().numpy().squeeze(1),
-            task_instruction,
-            is_valid,
-            global_steps,
-            max_steps
+            **env_init_kwargs
         )
-        # self.logger.log(f"after init venv, {gpu_memory()}")
         task_records = []
         valid_video = defaultdict(list)
         task_instructions = init_data["task_instructions"]
         inputs = init_data['obs']
-        # make_grid(inputs['sensor_data']['base_camera']['rgb'], 4, 8, global_steps)
         task_records = {
             "complete": init_data['complete'],
             "finish_step": init_data['finish_step'],
             "task_file_name": init_data['task_file_name'],
         }
-        # if is_valid:
-        #     for venv_index in init_data['task_file_name'].keys():
-        #         valid_video[venv_index].append(init_data['valid_images'][int(venv_index)])
         vla_history = []
         step = 0
-        is_already_done = torch.zeros(len(env_unique_id), dtype=torch.bool).cuda()
+        is_already_done = torch.zeros(len(init_data['finish_step']), dtype=torch.bool).cuda()
         vla_output = None
-        # breakpoint()
         while self.should_continue(step, max_steps, is_already_done):
             current_inputs = inputs
             current_task_instructions = task_instructions
-            # print(f"step: {step} processing input")
             vla_input = self.process_input(current_inputs, current_task_instructions, is_already_done)
             vla_input.update(meta_info)
-            # self.logger.log(f"before _generate_one_step, {gpu_memory()}")
             tmp_vla_output = self._generate_one_step(vla_input, step)
-            # self.logger.log(f"after _generate_one_step, {gpu_memory()}")
             tmp_vec_action, tmp_string_response = tmp_vla_output["action"]
             if vla_output is not None:
                 mask = ~is_already_done
@@ -441,7 +373,9 @@ class RobHFRollout(BaseRollout):
         del is_already_done
         batch["complete"] = torch.tensor(batch["complete"], dtype=torch.bool, device=batch['responses'].device)
         batch["finish_step"] = torch.tensor(batch["finish_step"], dtype=torch.int64, device=batch['responses'].device)
-        batch['env_unique_id'] = env_unique_id.detach().clone()
+        # batch['env_unique_id'] = env_unique_id.detach().clone()
+        for key in extra_batch.keys():
+            batch[key] = extra_batch[key]
         output_batch = TensorDict(
             batch,
             batch_size=batch_size)
@@ -682,8 +616,7 @@ class RobHFRollout(BaseRollout):
                     # renormalize_logits=True,
                     output_scores=False,  # this is potentially very large
                     return_dict_in_generate=True,
-                    use_cache=True)
-                    
+                    use_cache=True)  
            
             seq = output.sequences
             sequence_length = prompt_length + response_length
@@ -748,28 +681,19 @@ class RobHFRollout(BaseRollout):
             questions = prompts['questions']
             num_patches_list = prompts['num_patches_list']
             
-            # img_context_token_id = tokenizer.convert_tokens_to_ids('<IMG_CONTEXT>',)
-            # self.module.set_img_context_token_id(img_context_token_id)
-            # if verbose and pixel_values is not None:
-            #     image_bs = pixel_values.shape[0]
-            #     print(f'dynamic ViT batch size: {image_bs}')
             top_p = prompts.get('top_p', self.config.get('top_p', 1.0))
             top_k = prompts.get('top_k', self.config.get('top_k', 0))
             temperature = prompts.get('temperature', self.config.temperature)
             queries = []
-            # questions_str = ''
             for idx, num_patches in enumerate(num_patches_list):
                 question = questions[idx]
-                # questions_str += f"idx: {idx}, Q: {question}\n"
                 if pixel_values is not None and '<image>' not in question:
                     question = '<image>\n' + question
-                # template = get_conv_template(self.module.template)
                 template = deepcopy(self.module.conv_template)
                 template.system_message = self.module.system_message
                 template.append_message(template.roles[0], question)
                 template.append_message(template.roles[1], None)
                 query = template.get_prompt()
-                # questions_str += f"idx: {idx}, query: {query}\n"
                 for patches in num_patches:
                     image_tokens = '<img>' + '<IMG_CONTEXT>' * self.module.num_image_token * patches + '</img>'
                     query = query.replace('<image>', image_tokens, 1)
@@ -791,9 +715,7 @@ class RobHFRollout(BaseRollout):
                     top_k=top_k,
                     **self.generation_config,
                 )
-            # response_str = f"step: {step} inference done\n"
             full_seq = torch.concatenate((input_ids, generation_output), dim=-1)
-            # print(f"full_seq: {full_seq.shape}")
             responses = tokenizer.batch_decode(generation_output, skip_special_tokens=True)
             try:
                 cur_response_length = generation_output.shape[-1]
@@ -805,9 +727,6 @@ class RobHFRollout(BaseRollout):
             except Exception as e:
                 print(f"Warning, {e}\nshape: {generation_output.shape}")
             string_response = [response.split(template.sep.strip())[0].strip() for response in responses]
-            # for idx, response in enumerate(string_response):
-            #     response_str += f"idx: {idx}, R: {response}\n"
-            # print(response_str)
             actions, num_total, num_error = action_decode(prompts, string_response, self.task_suite, **self.process_kwargs)
             self.actions_total += num_total
             self.error_response_count += num_error

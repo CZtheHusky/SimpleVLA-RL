@@ -29,6 +29,7 @@ actor_rollout_ref:
   hybrid_engine: True
   model:
     vla: internvl_chat
+    mask_logits: False
     action_token_len: 16  # 16
     action_chunks_len: 1
     path: deltaQ_backbone

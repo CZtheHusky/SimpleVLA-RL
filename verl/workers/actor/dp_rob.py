@@ -621,12 +621,12 @@ class RobDataParallelPPOActor(BasePPOActor):
                     loss_info['actor/ppo_kl'] = loss_info['actor/ppo_kl'] +  ppo_kl.detach().item()
                 append_to_dict(metrics, loss_info)
             self.logger.log(f"after micro batch update: {gpu_memory()}")
-            grad_norm = self._optimizer_step()
             self.logger.log(f"after _optimizer_step: {gpu_memory()}")
             data = {'actor/grad_norm': grad_norm.detach().item()}
             append_to_dict(metrics, data)
             torch.cuda.empty_cache()
             self.logger.log(f"after empty_cache: {gpu_memory()}")
+        grad_norm = self._optimizer_step()
         self.actor_optimizer.zero_grad()
         self.logger.log(f"after zero_grad: {gpu_memory()}")
         torch.cuda.synchronize()
@@ -751,12 +751,19 @@ class RobDataParallelPPOActor(BasePPOActor):
                     policy_loss = pg_loss / response_mask_sum
                     policy_with_kl = policy_loss + ppo_kl * 0.01
                     
-                    loss = policy_with_kl / self.gradient_accumulation
-                    loss.backward()
+                    loss = policy_loss / self.gradient_accumulation
                     loss_info['actor/pg_loss'] =  loss_info['actor/pg_loss'] + policy_loss.detach().item()
                     loss_info['actor/pg_clipfrac'] = loss_info['actor/pg_clipfrac'] + pg_clipfrac.detach().item()
                     loss_info['actor/ppo_kl'] = loss_info['actor/ppo_kl'] +  ppo_kl.detach().item()
+                    loss.backward()
                 append_to_dict(metrics, loss_info)
+                total_ppo_kl = torch.tensor(loss_info['actor/ppo_kl']).cuda()
+                torch.distributed.all_reduce(total_ppo_kl, op=torch.distributed.ReduceOp.AVG)
+                # if total_ppo_kl >= 0.5:
+                #     print("Terminating update policy, kl early stop")
+                #     self.logger.log("Terminating update policy, kl early stop")
+                #     self.actor_optimizer.zero_grad()
+                #     break
             self.logger.log(f"before optimizer: {gpu_memory()}")
             grad_norm = self._optimizer_step()
             self.logger.log(f"after _optimizer_step: {gpu_memory()}")   

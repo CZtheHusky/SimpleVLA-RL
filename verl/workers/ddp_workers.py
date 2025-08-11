@@ -209,7 +209,10 @@ class RobActorRolloutRefWorker(Worker):
             )
             processor_list, valid_list = prepare_logits_processor(True if 'legacy' in local_path else False, self.tokenizer)
             generation_config = dict(logits_processor=processor_list)
-            actor_module.set_action_allowed_list(valid_list)
+            if self.config.model.get("mask_logits", False):
+                print(f"Masking irrelevant logits")
+                self.logger.log(f"Masking irrelevant logits")
+                actor_module.set_action_allowed_list(valid_list)
             actor_module.set_action_generation_config(generation_config)
             
         # self.logger.log("model done")

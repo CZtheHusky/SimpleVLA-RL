@@ -441,6 +441,7 @@ class RobHFRollout(BaseRollout):
         del is_already_done
         batch["complete"] = torch.tensor(batch["complete"], dtype=torch.bool, device=batch['responses'].device)
         batch["finish_step"] = torch.tensor(batch["finish_step"], dtype=torch.int64, device=batch['responses'].device)
+        batch['env_unique_id'] = env_unique_id.detach().clone()
         output_batch = TensorDict(
             batch,
             batch_size=batch_size)

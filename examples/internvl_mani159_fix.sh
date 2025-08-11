@@ -16,7 +16,7 @@ export RAY_DEDUP_LOGS=0
 PROJECT_NAME='SimpleVLA-RL'
 EXPERIMENT_NAME='mani_legacy_0.1_with_kl' 
 # For openvla-oft Libero-Long traj1 SFT or traj all SFT models can be find in https://huggingface.co/collections/Haozhan72/simplevla-rl-6833311430cd9df52aeb1f86
-SFT_MODEL_PATH="/mnt/nfs3/caozhe/workspace/SimpleVLA-RL/vlav-project/maniskill_stack_cubes_dual_legacy/internvl2-2b/v0-20250725-182532/checkpoint-1600"
+SFT_MODEL_PATH="/mnt/nfs3/caozhe/workspace/SimpleVLA-RL/ckpts/SimpleVLA-RL/mani_legacy_0.1_with_kl/2025-08-09_12-02-18/actor/global_step_3"
 CKPT_PATH="./ckpts"
 # DATASET_NAME can be libero_10 (libero_Long), libero_90, libero_spatial, libero_object, libero_goal
 DATASET_NAME="maniskill"
@@ -44,6 +44,7 @@ HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python -m verl.trainer.m
     reward_model.strategy=dp \
     actor_rollout_ref.model.path=$SFT_MODEL_PATH \
     actor_rollout_ref.model.vla=$VLA_NAME \
+    actor_rollout_ref.model.mask_logits=True    \
     actor_rollout_ref.model.action_token_len=15 \
     actor_rollout_ref.model.action_chunks_len=1 \
     actor_rollout_ref.actor.optim.lr=5e-6 \
@@ -89,6 +90,8 @@ HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python -m verl.trainer.m
     algorithm.adv_params.reward_model_gamma=1.0 \
     trainer.runtime_env=$ALIGN_PATH \
     trainer.wandb_mode=online \
-    trainer.val_before_train=True \
+    trainer.global_steps=4  \
+    trainer.wandb_kwargs.id=xs2lybkr    \
+    trainer.val_before_train=False \
 
 

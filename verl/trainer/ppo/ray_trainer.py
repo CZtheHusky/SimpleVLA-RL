@@ -40,7 +40,7 @@ import datetime
 from verl.utils.logger.local_logger import LocalLogger, DummyLogger
 
 WorkerType = Type[Worker]
-
+import wandb
 
 class Role(Enum):
     """
@@ -517,13 +517,16 @@ class RayTrainer(object):
             logger.log(data=val_metrics, step=global_steps)
             if self.config.trainer.get('val_only', False):
                 return
-
+        if self.config.data.task_suite_name == "maniskill":
+            filtered_id_counter = defaultdict(int)
         for epoch in range(self.config.trainer.total_epochs):
             self.train_dataloader.start_new_epoch()
             while True:
                 valid_batch = []
                 buffer_batch = []
-
+                if self.config.data.task_suite_name == "maniskill":
+                    env_id_counter = defaultdict(int)
+                    env_id_success_counter = defaultdict(int)
                 if self.train_dataloader.buffer_size() > 0:
                     buffer_batch = self.train_dataloader.get_from_buffer(batch_size, self.actor_rollout_wg.world_size)
                 metrics = defaultdict(list)
@@ -564,8 +567,14 @@ class RayTrainer(object):
                             'pad_token_id': self.tokenizer.pad_token_id,
                         }
                         self.logger.log(f"Trainer before fit generate_sequences, {gpu_memory()}")
-                        # breakpoint()
                         gen_batch_output = self.actor_rollout_wg.generate_sequences(prompts=gen_batch)
+                        if self.config.data.task_suite_name == "maniskill":
+                            # breakpoint()
+                            env_unique_id = gen_batch_output.batch['env_unique_id'].numpy().reshape(-1, n_samples)[:, 0]
+                            completes = gen_batch_output.batch['complete'].to(dtype=torch.int32).view(-1, n_samples).sum(-1).numpy()
+                            for id, num_completes in zip(env_unique_id, completes):
+                                env_id_counter[id] += 8
+                                env_id_success_counter[id] += num_completes
                         try:
                             finish_steps = gen_batch_output.batch['finish_step'].cpu().numpy()
                             msg = f"max step: {np.max(finish_steps)} min step: {np.min(finish_steps)} mean step: {np.mean(finish_steps)}"
@@ -576,7 +585,6 @@ class RayTrainer(object):
                         self.logger.log(f"Trainer after fit generate_sequences, {gpu_memory()}")
                         
                         roll_batch = DataProto.concat(batch_lst)
-                        #roll_batch.pop(batch_keys=['input_ids', 'attention_mask', 'position_ids'])
                         roll_batch = roll_batch.union(gen_batch_output)
                         torch.cuda.empty_cache()
                         self.logger.log(f"Trainer after empty cache, {gpu_memory()}")
@@ -601,9 +609,9 @@ class RayTrainer(object):
                     # do accuracy filtering and score logging
                     with Timer(name='acc&trunc_filter', text="{name}: {seconds:.1f} seconds") as timer:
                         if self.config.data.filter_accuracy or self.config.data.filter_truncated:
-                            print(f"before filtering: {len(roll_batch)}")
+                            # print(f"before filtering: {len(roll_batch)}")
                             filtered_roll_batch = self.filter(roll_batch.batch['acc'].unsqueeze(1), roll_batch, n_samples)
-                            print(f"after filtering: {len(filtered_roll_batch)}")
+                            # print(f"after filtering: {len(filtered_roll_batch)}")
                         else:
                             filtered_roll_batch = roll_batch
                     metrics['timing/acc&trunc_filter'] += timer.last
@@ -617,8 +625,11 @@ class RayTrainer(object):
                     
                     if len(valid_batch) == 0:
                         valid_batch = roll_batch_to_add
+                        print(f'init num rollouts: {len(valid_batch)}')
                     else:
+                        print(f"Before concat, valid: {len(valid_batch)}, new_batch: {len(roll_batch_to_add)}")
                         valid_batch = DataProto.concat([valid_batch, roll_batch_to_add])
+                        print(f"Afrer concat, valid: {len(valid_batch)}")
                     print(
                         f"collected {len(valid_batch)} / {batch_size * n_samples} rollouts and each prompt has {n_samples} responses")
                     
@@ -693,6 +704,10 @@ class RayTrainer(object):
                     with Timer(name='update_actor', text="{name}: {seconds:.1f} seconds") as timer:
                         batch.meta_info['is_filtered'] = True
                         batch.meta_info['train_mode'] = False
+                        if self.config.data.task_suite_name == "maniskill":
+                            env_unique_id = batch.batch['env_unique_id'].numpy().reshape(-1, n_samples)[:, 0]
+                            for id in env_unique_id:
+                                filtered_id_counter[id] += 1
                         actor_output, entropy_output = self.actor_rollout_wg.entropy_update_actor(batch)
                         # actor_output = self.actor_rollout_wg.update_actor(batch)
                         # entropy_output = self.actor_rollout_wg.compute_entropy(data=batch)
@@ -739,7 +754,52 @@ class RayTrainer(object):
                             # self.config.trainer.default_hdfs_dir, 'critic')
                         self.rm_wg.save_checkpoint(prm_local_path, prm_remote_path)
 
+                if self.config.data.task_suite_name == "maniskill":
+
+                    filterd_data = []
+                    self.logger.log("filtered_unid count:")
+                    for k, v in sorted(filtered_id_counter.items()):
+                        filterd_data.append([k, v])
+                        self.logger.log(f"{k}: {v}")
+
+                    filter_table = wandb.Table(
+                        data=filterd_data,
+                        columns=["filtered_uni_id", "count"]
+                    )
+                    
+                    success_rate = {k: v / env_id_counter[k] for k, v in sorted(env_id_success_counter.items())}
+                    self.logger.log("Env success rate:")
+
+                    sr_data = []
+                    for k, v in sorted(success_rate.items()):
+                        sr_data.append([k, v])
+                        self.logger.log(f"{k}: {v}")
+                    env_id_success_rate = wandb.Table(
+                        data=sr_data,
+                        columns=["uni_ids", "succss_rate"]
+                    )
+                    wandb.log(
+                        {
+                            f"tables/{global_steps}_filtered_uni_id_histogram": wandb.plot.bar(
+                                filter_table, 
+                                "filtered_uni_id", 
+                                "count", 
+                                title=f"{global_steps}_filtered_uni_id distribution"
+                            ),
+                            f"tables/{global_steps}_env_id_success_table": wandb.plot.bar(
+                                env_id_success_rate,
+                                'uni_ids',
+                                'succss_rate',
+                                title=f'{global_steps}_env_unid_success_rate'
+                            )
+                        },
+                        step=global_steps,
+                        commit=True,
+                    )
+                else:
+                    wandb.log(data={"global_step": global_steps}, step=global_steps, commit=True)
                 global_steps += 1
+
 
         # perform validation after training
         if self.val_reward_fn is not None:
@@ -802,7 +862,6 @@ class RayTrainer(object):
             acc_tensor = torch.mean(reward_matrix, dim=-1)
             counts = Counter(acc_tensor.tolist())
             print("Accuracy distribution:", " ".join(f"{k:.2f}:{v}" for k, v in sorted(counts.items())))
-
             acc_mask = (acc_tensor >= self.config.data.accuracy_lower_bound) & (
                         acc_tensor <= self.config.data.accuracy_upper_bound)
         else:
@@ -837,13 +896,12 @@ class RayTrainer(object):
 
         # Combine both masks
         combined_mask = acc_mask & trunc_mask
-
+        
         # Expand mask to cover all samples for each prompt
         final_mask = combined_mask.repeat_interleave(n_samples)
 
         # Apply the mask to the batch
         filtered_batch = batch.slice(final_mask)
-
         print(f"Filtered batch size: {len(filtered_batch)} (from original size: {len(batch)})")
         return filtered_batch
 

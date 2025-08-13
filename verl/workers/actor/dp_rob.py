@@ -721,10 +721,11 @@ class RobDataParallelPPOActor(BasePPOActor):
                     loss_info['actor/pg_loss'] =  loss_info['actor/pg_loss'] + policy_loss.detach().item()
                     loss_info['actor/pg_clipfrac'] = loss_info['actor/pg_clipfrac'] + pg_clipfrac.detach().item()
                     loss_info['actor/ppo_kl'] = loss_info['actor/ppo_kl'] +  ppo_kl.detach().item()
-                    msg = f"batch_idx: {batch_idx}, test_idx: {test_idx}\n"
-                    for key, value in loss_info.items():
-                        msg += f"{key}: {value:.4f}\n"
-                    self.logger.log(msg)
+                    if pg_loss >= 10:
+                        msg = f"batch_idx: {batch_idx}, test_idx: {test_idx}\n"
+                        for key, value in loss_info.items():
+                            msg += f"{key}: {value:.4f}\n"
+                        self.logger.log(msg)
                     # print(msg)
                     loss.backward()
                     append_to_dict(metrics, loss_info)

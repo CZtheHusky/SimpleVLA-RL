@@ -249,11 +249,13 @@ class RobActorRolloutRefWorker(Worker):
                     # load optimizer state from checkpoint
                     actor_optimizer.load_state_dict(torch.load(os.path.join(local_path, 'actor_optimizer.pt')))
                 print(f'Loaded actor optimizer state from {local_path}')
-            else:
+            elif self.config.actor.optimizer_type == 'rms':
                 actor_optimizer = optim.RMSprop(actor_module_ddp.parameters(),
                                             lr=optim_config.lr,
                                             momentum=0,
                                             weight_decay=0)
+            else:
+                raise NotImplementedError(f"Unsupported optimizer type: {self.config.actor.optimizer_type}")
 
             total_steps = optim_config.get('total_trddaining_steps', 0)
             num_warmup_steps_ratio = optim_config.get('lr_warmup_steps_ratio', 0.)

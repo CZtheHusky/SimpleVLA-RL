@@ -29,6 +29,7 @@ actor_rollout_ref:
   hybrid_engine: True
   model:
     vla: internvl_chat
+    legacy_action: False
     mask_logits: False
     action_token_len: 16  # 16
     action_chunks_len: 1
@@ -60,6 +61,7 @@ actor_rollout_ref:
     shuffle: True
     ulysses_sequence_parallel_size: 1 # sp size
     num_images_in_input: 2
+    optimizer_type: adamw
     optim:
       lr: 1e-6
       lr_warmup_steps_ratio: 0.  # the total steps will be injected during runtime
@@ -242,6 +244,7 @@ algorithm:
   kl_ctrl:
     type: fixed
     kl_coef: 0.001
+    horizon: 10  # the number of steps to average the kl divergence
 
 trainer:
   total_epochs: 30

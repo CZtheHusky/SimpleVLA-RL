@@ -144,7 +144,9 @@ class MANISKILL_Dataset(Dataset):
             self.consistent = False
         task_descriptions = {
             "StackCube-v1": "stack all the cubes",
+            "PushCube-v1": "push the cube to the target position",
         }
+        print(f'----------------------------\n---------------------Instructions: {task_descriptions}---------------------\n---------------------')
         for env_seed in env_seeds:
             for task_id in task_ids:
                 data = {

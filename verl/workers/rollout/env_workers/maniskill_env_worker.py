@@ -29,7 +29,8 @@ class EnvActor:
     def process_obs(self, obs):
         obs['agent']['qpos'] = obs['agent']['qpos'].cpu().numpy()
         obs['sensor_data']["base_camera"]["rgb"] = obs['sensor_data']["base_camera"]["rgb"].cpu().numpy()
-        obs['sensor_data']["hand_camera"]["rgb"] = obs['sensor_data']["hand_camera"]["rgb"].cpu().numpy()
+        if "hand_camera" in obs['sensor_data']:
+            obs['sensor_data']["hand_camera"]["rgb"] = obs['sensor_data']["hand_camera"]["rgb"].cpu().numpy()
         return obs
     
     def init_venv(self, env_ids, env_unique_ids, task_instructions, is_valid=False, global_steps=0, max_steps=150, n_samples=8):
@@ -94,7 +95,10 @@ class EnvActor:
                 self.finish_step += 1
                 valid_images = None
                 if self.is_valid:
-                    valid_images = np.concatenate([self.last_obs['sensor_data']["base_camera"]["rgb"], self.last_obs['sensor_data']["hand_camera"]["rgb"]], axis=2)
+                    if "hand_camera" in self.last_obs['sensor_data']:
+                        valid_images = np.concatenate([self.last_obs['sensor_data']["base_camera"]["rgb"], self.last_obs['sensor_data']["hand_camera"]["rgb"]], axis=2)
+                    else:
+                        valid_images = self.last_obs['sensor_data']["base_camera"]["rgb"]
                     for env_index in range(self.num_envs):
                         local_img = valid_images[env_index]
                         local_action = action[env_index]
@@ -130,7 +134,10 @@ class EnvActor:
                     last_finished = deepcopy(self.finished)
                     valid_images = None
                     if self.is_valid:
-                        valid_images = np.concatenate([self.last_obs['sensor_data']["base_camera"]["rgb"], self.last_obs['sensor_data']["hand_camera"]["rgb"]], axis=2)
+                        if "hand_camera" in self.last_obs['sensor_data']:
+                            valid_images = np.concatenate([self.last_obs['sensor_data']["base_camera"]["rgb"], self.last_obs['sensor_data']["hand_camera"]["rgb"]], axis=2)
+                        else:
+                            valid_images = self.last_obs['sensor_data']["base_camera"]["rgb"]
                         for env_index in range(self.num_envs):
                             local_img = valid_images[env_index]
                             local_action = sub_act[env_index]
@@ -166,7 +173,10 @@ def env_worker(task_name, env_ids, env_unique_ids, task_instruction, input_queue
     env = gym.make(env_id, num_envs=len(env_unique_ids))
     env = ManiSkillVectorEnv(env, auto_reset=True, ignore_terminations=False)
     obs, _  = env.reset(seed=env_unique_ids)
-    valid_images = np.concatenate([obs['sensor_data']["base_camera"]["rgb"].cpu().numpy(), obs['sensor_data']["hand_camera"]["rgb"].cpu().numpy()], axis=2)
+    if "hand_camera" in obs['sensor_data']:
+        valid_images = np.concatenate([obs['sensor_data']["base_camera"]["rgb"], obs['sensor_data']["hand_camera"]["rgb"]], axis=2)
+    else:
+        valid_images = obs['sensor_data']["base_camera"]["rgb"]
     is_first_finished = np.zeros(len(env_unique_ids), dtype=bool)
     finish_step = np.zeros(len(env_unique_ids))
 

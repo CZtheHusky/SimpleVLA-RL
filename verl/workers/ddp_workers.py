@@ -136,6 +136,8 @@ class RobActorRolloutRefWorker(Worker):
             from verl.utils.internvl_utils import replace_modeling_files
             if self.rank == 0: replace_modeling_files(local_path)
             torch.distributed.barrier() # prevent other workers init model before modeling files replaced
+        elif self.config.model.vla == 'internvl_chat_head':
+            pass
         
         #add end
 
@@ -198,7 +200,7 @@ class RobActorRolloutRefWorker(Worker):
                 config=actor_model_config,
                 trust_remote_code=True,
             )
-            processor_list, valid_list = prepare_logits_processor(True if 'legacy' in local_path else False, self.tokenizer)
+            processor_list, valid_list = prepare_logits_processor(self.config.model.legacy_action, self.tokenizer)
             generation_config = dict(logits_processor=processor_list)
             if self.config.model.get("mask_logits", False):
                 print(f"Masking irrelevant logits")
@@ -238,10 +240,20 @@ class RobActorRolloutRefWorker(Worker):
         # TODO: add more optimizer args into config
         if self._is_actor:
             from verl.utils.torch_functional import get_constant_schedule_with_warmup
-            actor_optimizer = optim.AdamW(actor_module_ddp.parameters(),
-                                          lr=optim_config.lr,
-                                          betas=optim_config.get('betas', (0.9, 0.999)),
-                                          weight_decay=optim_config.get('weight_decay', 1e-2))
+            if self.config.actor.optimizer_type == 'adamw':
+                actor_optimizer = optim.AdamW(actor_module_ddp.parameters(),
+                                            lr=optim_config.lr,
+                                            betas=optim_config.get('betas', (0.9, 0.999)),
+                                            weight_decay=optim_config.get('weight_decay', 1e-2))
+                if os.path.exists(os.path.join(local_path, f'actor_optimizer_{self.rank}.pt')):
+                    # load optimizer state from checkpoint
+                    actor_optimizer.load_state_dict(torch.load(os.path.join(local_path, 'actor_optimizer.pt')))
+                print(f'Loaded actor optimizer state from {local_path}')
+            else:
+                actor_optimizer = optim.RMSprop(actor_module_ddp.parameters(),
+                                            lr=optim_config.lr,
+                                            momentum=0,
+                                            weight_decay=0)
 
             total_steps = optim_config.get('total_trddaining_steps', 0)
             num_warmup_steps_ratio = optim_config.get('lr_warmup_steps_ratio', 0.)
@@ -338,6 +350,7 @@ class RobActorRolloutRefWorker(Worker):
         
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
     def entropy_update_actor(self, data: DataProto):
+        # self.save_checkpoint('log_prob_compute_backup')
         actor_out = self.update_actor(data)
         entropy_out = self.compute_entropy(data)
         return actor_out, entropy_out
@@ -435,18 +448,17 @@ class RobActorRolloutRefWorker(Worker):
             output.meta_info['use_dynamic_bsz'] = self.config.rollout.log_prob_use_dynamic_bsz
             output.meta_info['max_token_len'] = self.config.rollout.log_prob_max_token_len_per_gpu
             output.meta_info['pad_token_id'] = self.tokenizer.pad_token_id
-            old_log_probs = self.actor.compute_log_prob(data=output)
-            output.batch['old_log_probs'] = old_log_probs
-            self.logger.log(f"generate_sequences, log prob computed, shape; {old_log_probs.shape} {gpu_memory()}")
+            # old_log_probs = self.actor.compute_log_prob(data=output)
+            # output.batch['old_log_probs'] = old_log_probs
+            # self.logger.log(f"generate_sequences, log prob computed, shape; {old_log_probs.shape} {gpu_memory()}")
         output = output.to('cpu')
         self.logger.log(f"generate_sequences, move to cpu: {gpu_memory()}")
-
         # clear kv cache
         torch.cuda.synchronize()
         torch.distributed.barrier()
         torch.cuda.empty_cache()
         self.logger.log(f"generate_sequences, after empty cache {gpu_memory()}")
-        log_gpu_memory_usage('After recompute log prob', logger=logger)
+        # log_gpu_memory_usage('After recompute log prob', logger=logger)
         return output
 
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
@@ -519,6 +531,19 @@ class RobActorRolloutRefWorker(Worker):
                     print(f'Uploading actor checkpoint to {hdfs_path}')
                     hdfs_io.makedirs(hdfs_path, exist_ok=True)
                     hdfs_io.copy(src=local_path, dst=hdfs_path)
+            torch.distributed.barrier()
+            if isinstance(self.actor_optimizer, optim.AdamW):
+                torch.save(self.actor_optimizer.state_dict(), os.path.join(local_path, f'actor_optimizer_{self.rank}.pt'))
+                
+            # tmp_local_path = f"{local_path}_{self.rank}"
+            # print(f'Saving actor checkpoint to {tmp_local_path}')
+            # os.makedirs(tmp_local_path, exist_ok=True)
+            # self.actor_module.save_pretrained(tmp_local_path)
+            # self.tokenizer.save_pretrained(tmp_local_path)
+            # if hdfs_path is not None:
+            #     print(f'Uploading actor checkpoint to {hdfs_path}')
+            #     hdfs_io.makedirs(hdfs_path, exist_ok=True)
+            #     hdfs_io.copy(src=tmp_local_path, dst=hdfs_path)
 
         torch.distributed.barrier()
 

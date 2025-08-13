@@ -569,7 +569,6 @@ class RayTrainer(object):
                         self.logger.log(f"Trainer before fit generate_sequences, {gpu_memory()}")
                         gen_batch_output = self.actor_rollout_wg.generate_sequences(prompts=gen_batch)
                         if self.config.data.task_suite_name == "maniskill":
-                            # breakpoint()
                             env_unique_id = gen_batch_output.batch['env_unique_id'].numpy().reshape(-1, n_samples)[:, 0]
                             completes = gen_batch_output.batch['complete'].to(dtype=torch.int32).view(-1, n_samples).sum(-1).numpy()
                             for id, num_completes in zip(env_unique_id, completes):

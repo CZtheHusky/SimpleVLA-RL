@@ -453,7 +453,8 @@ def obs_process(inputs: List, task_descriptions, task_suite: TaskSuite, done_mas
             camera = inputs['sensor_data']["base_camera"]["rgb"][env_id]
             rescaled_qpos = np.round(qpos * 1000).astype(np.int32)
             if horizon == 1:
-                query = f"The current position state of the robotic arm's end gripper is as follows: {{Joint_0: {rescaled_qpos[0]}, Joint_1: {rescaled_qpos[1]}, Joint_2: {rescaled_qpos[2]}, Joint_3: {rescaled_qpos[3]}, Joint_4: {rescaled_qpos[4]}, Joint_5: {rescaled_qpos[5]}, Joint_6: {rescaled_qpos[6]}, Joint_7: {rescaled_qpos[7]}, Joint_8: {rescaled_qpos[8]}}}. What action should the robot take to get better completion of instruction: {instructions[env_id]}?"
+                joints_str = ", ".join(f"Joint_{i}: {v}" for i, v in enumerate(rescaled_qpos[:8]))
+                query = f"The current position state of the robotic arm's end gripper is as follows: {{{joints_str}}}. What action should the robot take to get better completion of instruction: {instructions[env_id]}?"
             else:
                 query = f"The current joint state of the robotic arm is as follows: {{{rescaled_qpos[0]} {rescaled_qpos[1]} {rescaled_qpos[2]} {rescaled_qpos[3]} {rescaled_qpos[4]} {rescaled_qpos[5]} {rescaled_qpos[6]} {rescaled_qpos[7]} {rescaled_qpos[8]}}}. What action should the robot take to get better completion of instruction: {instructions[env_id]}?"
             pixel_0 = process_image_internvl(camera)

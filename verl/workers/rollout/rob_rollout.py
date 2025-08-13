@@ -101,6 +101,7 @@ class RobHFRollout(BaseRollout):
             self.env_type = ENV_TYPE.VENV
             self.max_steps = {
                 "StackCube-v1": 150,
+                "PushCube-v1": 100,
             }
             from verl.workers.rollout.env_workers.maniskill_env_worker import env_worker, EnvActor
             self.env_actor = EnvActor(pid=os.getpid(), execute_horizon=config.horizon)
@@ -267,6 +268,7 @@ class RobHFRollout(BaseRollout):
             return step < max_step
                            
     def _venv_generate_minibatch(self, prompts):
+        # if self.rank == 0: breakpoint()
         self.module.eval()
         env_init_kwargs, batch_size, is_training, is_valid, max_steps, meta_info, extra_batch = prepare_mani_init(prompts, self.max_steps)
         init_data = self.env_actor.init_venv(
@@ -322,6 +324,7 @@ class RobHFRollout(BaseRollout):
             for venv_index in range(len(is_already_done)):
                 if not is_already_done[venv_index]:
                     if is_complete[venv_index]:
+                        # print(f"Updating env {venv_index}, is_complete: {is_complete[venv_index]}, finish_step: {finish_step[venv_index]}")
                         is_already_done[venv_index] = True
                     task_records['complete'][venv_index] = is_complete[venv_index]
                     task_records['finish_step'][venv_index] = finish_step[venv_index]
@@ -342,7 +345,7 @@ class RobHFRollout(BaseRollout):
             for venv_idx, images in valid_video.items():
                 complete = task_records['complete'][venv_idx]
                 task_file = task_records['task_file_name'][venv_idx]
-                # assert len(images) == task_records['finish_step'][venv_idx], f"Mismatch in number of images {len(images)} and finish step {task_records['finish_step'][venv_idx]} for task file {task_file}."
+                assert len(images) == task_records['finish_step'][venv_idx], f"Mismatch in number of images {len(images)} and finish step {task_records['finish_step'][venv_idx]} for task file {task_file}."
                 future = self.executor.submit(
                     save_rollout_video,
                     images,

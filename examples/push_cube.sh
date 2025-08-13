@@ -14,20 +14,23 @@ export RAY_memory_monitor_refresh_ms=0
 export TORCH_NCCL_TIMEOUT=3600
 export RAY_DEDUP_LOGS=0
 PROJECT_NAME='SimpleVLA-RL'
-EXPERIMENT_NAME='mani_legacy_01' 
+EXPERIMENT_NAME='push_cube_0' 
 # For openvla-oft Libero-Long traj1 SFT or traj all SFT models can be find in https://huggingface.co/collections/Haozhan72/simplevla-rl-6833311430cd9df52aeb1f86
 # SFT_MODEL_PATH="/mnt/nfs3/caozhe/workspace/SimpleVLA-RL/vlav-project/maniskill_stack_cubes_dual_legacy/internvl2-2b/v0-20250725-182532/checkpoint-1600"
-SFT_MODEL_PATH="/mnt/nfs3/caozhe/workspace/SimpleVLA-RL/ckpts/SimpleVLA-RL/mani_legacy_0.1_nomask/2025-08-11_14-23-44/actor/global_step_1"
+# SFT_MODEL_PATH="/mnt/nfs3/caozhe/workspace/SimpleVLA-RL/ckpts/SimpleVLA-RL/mani_legacy_0.1_nomask/2025-08-11_14-23-44/actor/global_step_1"
+# SFT_MODEL_PATH="/mnt/nfs3/caozhe/workspace/ManiSkill/vlav-project/train_push_cube500_legacy/internvl2-2b/v0-20250812-011657/checkpoint-2769"
+# SFT_MODEL_PATH="/mnt/nfs3/caozhe/workspace/SimpleVLA-RL/ckpts/SimpleVLA-RL/push_cube_0/2025-08-12_13-28-58/actor/global_step_0"
+SFT_MODEL_PATH="/mnt/nfs3/caozhe/workspace/SimpleVLA-RL/ckpts/SimpleVLA-RL/push_cube_0/2025-08-12_16-27-58/actor/global_step_1_0"
 CKPT_PATH="./ckpts"
 # DATASET_NAME can be libero_10 (libero_Long), libero_90, libero_spatial, libero_object, libero_goal
 DATASET_NAME="maniskill"
 VLA_NAME="internvl_chat"
-NUM_GPUS=8
+NUM_GPUS=4
 # If you want to use 2*8 GPU to RL. Set NUM_NODES=2
 NUM_NODES=1 
 ALIGN_PATH="align.json"
 
-HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python -m verl.trainer.main_ppo \
+HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=4,5,2,3 python -m verl.trainer.main_ppo \
     data.task_suite_name=$DATASET_NAME \
     data.n_samples=8 \
     data.filter_accuracy=True \
@@ -38,12 +41,15 @@ HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python -m verl.trainer.m
     data.val_batch_size=120 \
     data.rob_dataset_kwargs.num_envs_seeds=240  \
     data.rob_dataset_kwargs.len_dataset=240 \
-    data.max_prompt_length=690 \
+    data.max_prompt_length=440 \
     data.max_response_length=15 \
+    data.rob_dataset_kwargs.task_ids='["PushCube-v1"]'   \
     actor_rollout_ref.actor.strategy=dp \
     critic.strategy=dp  \
     reward_model.strategy=dp \
+    actor_rollout_ref.rollout.dual_cam=False    \
     actor_rollout_ref.model.path=$SFT_MODEL_PATH \
+    actor_rollout_ref.model.legacy_action=True \
     actor_rollout_ref.model.vla=$VLA_NAME \
     actor_rollout_ref.model.action_token_len=15 \
     actor_rollout_ref.model.action_chunks_len=1 \
@@ -55,26 +61,28 @@ HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python -m verl.trainer.m
     actor_rollout_ref.actor.grad_clip=1 \
     actor_rollout_ref.actor.clip_ratio_high=0.2 \
     actor_rollout_ref.actor.clip_ratio_low=0.2 \
-    actor_rollout_ref.actor.num_images_in_input=2 \
+    actor_rollout_ref.actor.num_images_in_input=1 \
     actor_rollout_ref.actor.traj_mini_batch_size=10 \
     actor_rollout_ref.model.enable_gradient_checkpointing=False \
     actor_rollout_ref.model.use_remove_padding=False \
     actor_rollout_ref.actor.entropy_coeff=0. \
-    actor_rollout_ref.rollout.num_images_in_input=2 \
-    actor_rollout_ref.rollout.val_micro_batch_size=60 \
+    actor_rollout_ref.rollout.num_images_in_input=1 \
+    actor_rollout_ref.rollout.val_micro_batch_size=64 \
     actor_rollout_ref.rollout.experiment_name=$EXPERIMENT_NAME \
     actor_rollout_ref.rollout.micro_batch_size=64 \
     actor_rollout_ref.rollout.unnorm_key=$DATASET_NAME \
     actor_rollout_ref.rollout.model_family=internvl_chat \
     actor_rollout_ref.rollout.task_suite_name=$DATASET_NAME \
     actor_rollout_ref.rollout.pretrained_checkpoint=$SFT_MODEL_PATH \
-    actor_rollout_ref.rollout.max_prompt_length=690 \
+    actor_rollout_ref.rollout.max_prompt_length=440 \
     actor_rollout_ref.rollout.log_prob_micro_batch_size=32 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.name=hf \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.9 \
     actor_rollout_ref.ref.log_prob_micro_batch_size=32 \
-    algorithm.kl_ctrl.kl_coef=0.00 \
+    algorithm.kl_ctrl.kl_coef=0.000 \
+    algorithm.kl_ctrl.type=adaptive \
+    algorithm.kl_ctrl.horizon=10 \
     trainer.logger=['console','wandb'] \
     trainer.project_name=$PROJECT_NAME \
     trainer.experiment_name=$EXPERIMENT_NAME \
@@ -90,8 +98,8 @@ HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python -m verl.trainer.m
     algorithm.adv_params.reward_model_gamma=1.0 \
     trainer.runtime_env=$ALIGN_PATH \
     trainer.wandb_mode=online \
-    trainer.global_steps=0  \
-    trainer.val_before_train=True \
+    trainer.global_steps=2  \
+    trainer.val_before_train=False \
     # trainer.wandb_kwargs.id=4yq04sq5    \
 
 

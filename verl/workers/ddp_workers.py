@@ -254,6 +254,11 @@ class RobActorRolloutRefWorker(Worker):
                                             lr=optim_config.lr,
                                             momentum=0,
                                             weight_decay=0)
+            elif self.config.actor.optimizer_type == 'sgd':
+                actor_optimizer = optim.SGD(actor_module_ddp.parameters(),
+                                            lr=optim_config.lr,
+                                            momentum=0,
+                                            weight_decay=0)
             else:
                 raise NotImplementedError(f"Unsupported optimizer type: {self.config.actor.optimizer_type}")
 

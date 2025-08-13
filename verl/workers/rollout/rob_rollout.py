@@ -125,22 +125,10 @@ class RobHFRollout(BaseRollout):
         train_rollout_dir = os.path.join("rollouts", config.experiment_name, dt_flag, 'train')
         os.makedirs(train_rollout_dir, exist_ok=True)
         self.train_rollout_dir = train_rollout_dir
-        # self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=8)
         self.executor = ThreadPoolExecutor(max_workers=8)
         self.futures = []
         self.actions_total = 0
         self.error_response_count = 0
-        #oft add
-        # unnorm_key=config.unnorm_key
-        # if  unnorm_key not in self.module.norm_stats and f"{unnorm_key}_no_noops" in self.module.norm_stats:
-        #     unnorm_key = f"{unnorm_key}_no_noops"
-        # assert unnorm_key in self.module.norm_stats, f"Action un-norm key {unnorm_key} not found in VLA `norm_stats`!"
-        # self.config.unnorm_key = unnorm_key
-        #add end
-        # gpus = tf.config.experimental.list_physical_devices('GPU')
-        # if gpus:
-        #     for gpu in gpus:  
-        #         tf.config.experimental.set_memory_growth(gpu, True)
 
     def _check_futures(self):
         done, _ = wait(self.futures, timeout=0)

@@ -29,6 +29,7 @@ class EnvActor:
     def process_obs(self, obs):
         obs['agent']['qpos'] = obs['agent']['qpos'].cpu().numpy()
         obs['sensor_data']["base_camera"]["rgb"] = obs['sensor_data']["base_camera"]["rgb"].cpu().numpy()
+        obs["extra"]["tcp_pose"] = obs["extra"]["tcp_pose"].cpu().numpy()
         if "hand_camera" in obs['sensor_data']:
             obs['sensor_data']["hand_camera"]["rgb"] = obs['sensor_data']["hand_camera"]["rgb"].cpu().numpy()
         return obs

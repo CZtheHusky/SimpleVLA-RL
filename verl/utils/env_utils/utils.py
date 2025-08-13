@@ -28,6 +28,46 @@ class TaskSuite(Enum):
     MANISKILL = 0
     GRUTOPIA = 1
     LIBERO = 2
+    
+ACTION_RESCALE = np.array([1000, 1000, 1000, 57.3, 57.3, 57.3, 1])
+
+def extract_action_vector(llm_output: str):
+    """
+    从 LLM 的输出字符串中提取一个 7D 动作向量。
+
+    Args:
+        llm_output: LLM 的字符串输出。
+                    示例: "action: {x: -129mm, y: 442mm, z: 183mm, roll: 2 degrees, pitch: 40 degrees, yaw: 0 degrees, open: 1}"
+                    绝对动作示例: "action: {x: -11mm, y: 20mm, z: 33mm, quat: 10, 20, 30, 22, open: 1}"
+
+    Returns:
+        对于相对动作 (is_abs=False)，返回一个元组 (delta_trans, delta_r, gripper_open)。
+        对于绝对动作 (is_abs=True)，返回一个元组 (abs_trans, abs_quat, gripper_open)。
+        如果无法找到所有值，则返回 None。
+    """
+    # Define the keys we want to extract in the desired final order
+    keys_in_order = ['x', 'y', 'z', 'roll', 'pitch', 'yaw', 'open']
+    
+    # This regex pattern finds all key-value pairs we are interested in.
+    # It captures the key (e.g., 'x') and its corresponding numeric value.
+    pattern = r"(x|y|z|roll|pitch|yaw|open):\s*(-?[\d.]+)"
+    
+    # re.findall will return a list of tuples, e.g., [('x', '-129'), ('y', '442'), ...]
+    matches = re.findall(pattern, llm_output)
+    
+    # Convert the list of tuples into a dictionary for easy lookup.
+    # The captured value is converted to a float.
+    data_dict = {key: float(value) for key, value in matches}
+    
+    # Assemble the vector in the correct order using the dictionary.
+    # We use .get() to safely handle cases where a key might be missing.
+    try:
+        vector = np.array([data_dict[key] for key in keys_in_order], dtype=np.float32)
+        return vector
+    except KeyError as e:
+        print(f"Error: Missing key {e} in the LLM output: {llm_output}")
+        return None
+
 
 def prepare_mani_init(prompts, max_steps_dict):
     meta_info = prompts.meta_info
@@ -279,7 +319,7 @@ def action_decode(prompts, string_response, task_suite: TaskSuite, **process_kwa
             actions = []
             for idx in range(len(string_response)):
                 response = string_response[idx]
-                action_extracted = parse_and_validate_vector(response)
+                action_extracted = extract_action_vector(response)
                 total += 1
                 if action_extracted is None:
                     errors += 1
@@ -289,42 +329,46 @@ def action_decode(prompts, string_response, task_suite: TaskSuite, **process_kwa
                     else:
                         action_extracted[-1] = -1
                 else:
-                    action_extracted[:-1] = action_extracted[:-1] / 1000
+                    # action_extracted[:-1] = action_extracted[:-1] / 1000
+                    action_extracted = action_extracted / ACTION_RESCALE
+                    if action_extracted[-1] <= 0.5:
+                        action_extracted[-1] = -1
                 actions.append(action_extracted)
             actions = np.array(actions)
         else:
-            qposes = prompts['qposes']
-            tmp_actions = []
-            for idx in range(len(string_response)):
-                response = string_response[idx]
-                action_extracted = parse_action_vectors(response)
-                total += horizon
-                summon_actions = []
-                for sub_action in action_extracted:
-                    if sub_action is None:
-                        break
-                    else:
-                        # print(f"sub action: {sub_action}")
-                        sub_action = sub_action.astype(np.float32)
-                        sub_action[:-1] = sub_action[:-1] / 1000
-                        summon_actions.append(sub_action)
-                        # print(summon_actions[-1])
-                if len(summon_actions) > horizon:
-                    summon_actions = summon_actions[:horizon]
-                    errors += (len(summon_actions) - horizon)
-                else:
-                    tmp_action = np.zeros(7, dtype=np.float32)
-                    if qposes[idx][-1] >= 0.037:
-                        tmp_action[-1] = 1
-                    else:
-                        tmp_action[-1] = -1
-                    errors += (horizon - len(summon_actions))
-                    summon_actions += [tmp_action] * (horizon - len(summon_actions))
-                tmp_actions.append(summon_actions)
-            actions = []
-            for i in range(horizon):
-                actions.append(np.array([summon_actions[i] for summon_actions in tmp_actions]))
-            actions = np.array(actions)
+            raise NotImplementedError
+            # qposes = prompts['qposes']
+            # tmp_actions = []
+            # for idx in range(len(string_response)):
+            #     response = string_response[idx]
+            #     action_extracted = parse_action_vectors(response)
+            #     total += horizon
+            #     summon_actions = []
+            #     for sub_action in action_extracted:
+            #         if sub_action is None:
+            #             break
+            #         else:
+            #             # print(f"sub action: {sub_action}")
+            #             sub_action = sub_action.astype(np.float32)
+            #             sub_action[:-1] = sub_action[:-1] / 1000
+            #             summon_actions.append(sub_action)
+            #             # print(summon_actions[-1])
+            #     if len(summon_actions) > horizon:
+            #         summon_actions = summon_actions[:horizon]
+            #         errors += (len(summon_actions) - horizon)
+            #     else:
+            #         tmp_action = np.zeros(7, dtype=np.float32)
+            #         if qposes[idx][-1] >= 0.037:
+            #             tmp_action[-1] = 1
+            #         else:
+            #             tmp_action[-1] = -1
+            #         errors += (horizon - len(summon_actions))
+            #         summon_actions += [tmp_action] * (horizon - len(summon_actions))
+            #     tmp_actions.append(summon_actions)
+            # actions = []
+            # for i in range(horizon):
+            #     actions.append(np.array([summon_actions[i] for summon_actions in tmp_actions]))
+            # actions = np.array(actions)
             # print(f"decoded action shape: {actions.shape}")
     return actions, total, errors
         
@@ -449,14 +493,25 @@ def obs_process(inputs: List, task_descriptions, task_suite: TaskSuite, done_mas
             if done_mask[env_id]:
                 continue
             qpos = inputs["agent"]["qpos"][env_id]
+            tcp_pose = inputs["extra"]["tcp_pose"][env_id]
             qposes.append(qpos)
             camera = inputs['sensor_data']["base_camera"]["rgb"][env_id]
+            eef_xyz = tcp_pose[:3]
+            eef_xyz = np.round(eef_xyz * 1000).astype(np.int32)  # Convert to mm
+            eef_rpy = quat_to_rpy(tcp_pose[3:7], degrees=True)
+            eef_rpy = np.round(eef_rpy).astype(np.int32)  # Convert to degrees
             rescaled_qpos = np.round(qpos * 1000).astype(np.int32)
-            if horizon == 1:
-                joints_str = ", ".join(f"Joint_{i}: {v}" for i, v in enumerate(rescaled_qpos[:8]))
-                query = f"The current position state of the robotic arm's end gripper is as follows: {{{joints_str}}}. What action should the robot take to get better completion of instruction: {instructions[env_id]}?"
+            if qpos[-1] >= 0.037:
+                gripper_state = 1
             else:
-                query = f"The current joint state of the robotic arm is as follows: {{{rescaled_qpos[0]} {rescaled_qpos[1]} {rescaled_qpos[2]} {rescaled_qpos[3]} {rescaled_qpos[4]} {rescaled_qpos[5]} {rescaled_qpos[6]} {rescaled_qpos[7]} {rescaled_qpos[8]}}}. What action should the robot take to get better completion of instruction: {instructions[env_id]}?"
+                gripper_state = 0
+            # if horizon == 1:
+            #     joints_str = ", ".join(f"Joint_{i}: {v}" for i, v in enumerate(rescaled_qpos[:8]))
+            #     query = f"The current position state of the robotic arm's end gripper is as follows: {{{joints_str}}}. What action should the robot take to get better completion of instruction: {instructions[env_id]}?"
+            # else:
+            #     query = f"The current joint state of the robotic arm is as follows: {{{rescaled_qpos[0]} {rescaled_qpos[1]} {rescaled_qpos[2]} {rescaled_qpos[3]} {rescaled_qpos[4]} {rescaled_qpos[5]} {rescaled_qpos[6]} {rescaled_qpos[7]} {rescaled_qpos[8]}}}. What action should the robot take to get better completion of instruction: {instructions[env_id]}?"
+            query = f"The current position state of the robotic arm's end gripper is as follows: {{x: {eef_xyz[0]}mm, y: {eef_xyz[1]}mm, z: {eef_xyz[2]}mm, roll: {eef_rpy[0]} degrees, pitch: {eef_rpy[1]} degrees, yaw: {eef_rpy[2]} degrees, open: {gripper_state}}}. What action should the robot take to get better completion of instruction: {instructions[env_id]}?"
+
             pixel_0 = process_image_internvl(camera)
             patch_list = []
             pixels = []
@@ -590,99 +645,99 @@ def img_decode(img_bytes):
     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     return img
 
-def extract_action_vector(llm_output: str, action_type: ActionType = ActionType.DELTA_EEF, quatEEF: bool = False) -> Tuple[np.ndarray, np.ndarray, float]:
-    """
-    从 LLM 的输出字符串中提取一个 7D 动作向量。
+# def extract_action_vector(llm_output: str, action_type: ActionType = ActionType.DELTA_EEF, quatEEF: bool = False) -> Tuple[np.ndarray, np.ndarray, float]:
+#     """
+#     从 LLM 的输出字符串中提取一个 7D 动作向量。
 
-    Args:
-        llm_output: LLM 的字符串输出。
-                    示例: "action: {x: -129mm, y: 442mm, z: 183mm, roll: 2 degrees, pitch: 40 degrees, yaw: 0 degrees, open: 1}"
-                    绝对动作示例: "action: {x: -11mm, y: 20mm, z: 33mm, quat: 10, 20, 30, 22, open: 1}"
+#     Args:
+#         llm_output: LLM 的字符串输出。
+#                     示例: "action: {x: -129mm, y: 442mm, z: 183mm, roll: 2 degrees, pitch: 40 degrees, yaw: 0 degrees, open: 1}"
+#                     绝对动作示例: "action: {x: -11mm, y: 20mm, z: 33mm, quat: 10, 20, 30, 22, open: 1}"
 
-    Returns:
-        对于相对动作 (is_abs=False)，返回一个元组 (delta_trans, delta_r, gripper_open)。
-        对于绝对动作 (is_abs=True)，返回一个元组 (abs_trans, abs_quat, gripper_open)。
-        如果无法找到所有值，则返回 None。
-    """
-    if action_type in [ActionType.ABS_EEF, ActionType.DELTA_EEF]:
-        if quatEEF:
-            try:
-                simple_pattern = r"(x|y|z|open):\s*(-?[\d.]+)"
-                simple_matches = re.findall(simple_pattern, llm_output)
-                data_dict = {key: float(value) for key, value in simple_matches}
+#     Returns:
+#         对于相对动作 (is_abs=False)，返回一个元组 (delta_trans, delta_r, gripper_open)。
+#         对于绝对动作 (is_abs=True)，返回一个元组 (abs_trans, abs_quat, gripper_open)。
+#         如果无法找到所有值，则返回 None。
+#     """
+#     if action_type in [ActionType.ABS_EEF, ActionType.DELTA_EEF]:
+#         if quatEEF:
+#             try:
+#                 simple_pattern = r"(x|y|z|open):\s*(-?[\d.]+)"
+#                 simple_matches = re.findall(simple_pattern, llm_output)
+#                 data_dict = {key: float(value) for key, value in simple_matches}
 
-                quat_pattern = r"quat:\s*(-?[\d.]+),\s*(-?[\d.]+),\s*(-?[\d.]+),\s*(-?[\d.]+)"
-                quat_match = re.search(quat_pattern, llm_output)
+#                 quat_pattern = r"quat:\s*(-?[\d.]+),\s*(-?[\d.]+),\s*(-?[\d.]+),\s*(-?[\d.]+)"
+#                 quat_match = re.search(quat_pattern, llm_output)
 
-                if not quat_match:
-                    raise ValueError("未找到四元数 'quat' 值")
+#                 if not quat_match:
+#                     raise ValueError("未找到四元数 'quat' 值")
 
-                abs_trans = np.array([data_dict['x'], data_dict['y'], data_dict['z']], dtype=np.float32)
+#                 abs_trans = np.array([data_dict['x'], data_dict['y'], data_dict['z']], dtype=np.float32)
                 
-                abs_quat = np.array([float(q) for q in quat_match.groups()], dtype=np.float32)
+#                 abs_quat = np.array([float(q) for q in quat_match.groups()], dtype=np.float32)
 
-                gripper_open = float(data_dict['open'])
+#                 gripper_open = float(data_dict['open'])
 
-                return abs_trans, abs_quat, gripper_open
+#                 return abs_trans, abs_quat, gripper_open
 
-            except (KeyError, ValueError) as e:
-                print(f"Error: {e} in the LLM output: {llm_output}")
-                return None
-        else:
-            # Define the keys we want to extract in the desired final order
-            keys_in_order = ['x', 'y', 'z', 'roll', 'pitch', 'yaw', 'open']
+#             except (KeyError, ValueError) as e:
+#                 print(f"Error: {e} in the LLM output: {llm_output}")
+#                 return None
+#         else:
+#             # Define the keys we want to extract in the desired final order
+#             keys_in_order = ['x', 'y', 'z', 'roll', 'pitch', 'yaw', 'open']
             
-            # This regex pattern finds all key-value pairs we are interested in.
-            # It captures the key (e.g., 'x') and its corresponding numeric value.
-            pattern = r"(x|y|z|roll|pitch|yaw|open):\s*(-?[\d.]+)"
+#             # This regex pattern finds all key-value pairs we are interested in.
+#             # It captures the key (e.g., 'x') and its corresponding numeric value.
+#             pattern = r"(x|y|z|roll|pitch|yaw|open):\s*(-?[\d.]+)"
             
-            # re.findall will return a list of tuples, e.g., [('x', '-129'), ('y', '442'), ...]
-            matches = re.findall(pattern, llm_output)
+#             # re.findall will return a list of tuples, e.g., [('x', '-129'), ('y', '442'), ...]
+#             matches = re.findall(pattern, llm_output)
             
-            # Convert the list of tuples into a dictionary for easy lookup.
-            # The captured value is converted to a float.
-            data_dict = {key: float(value) for key, value in matches}
+#             # Convert the list of tuples into a dictionary for easy lookup.
+#             # The captured value is converted to a float.
+#             data_dict = {key: float(value) for key, value in matches}
             
-            # Assemble the vector in the correct order using the dictionary.
-            # We use .get() to safely handle cases where a key might be missing.
-            try:
-                vector = np.array([data_dict[key] for key in keys_in_order], dtype=np.float32)
-                delta_trans = vector[:3]  # x, y, z
-                delta_r = vector[3:6]  # roll, pitch, yaw
-                gripper_open = vector[-1]  # open
-                return delta_trans, delta_r, gripper_open
-            except KeyError as e:
-                print(f"Error: Missing key {e} in the LLM output: {llm_output}")
-                return None
-    elif action_type == ActionType.ABS_JOINT or action_type == ActionType.DELTA_JOINT:
-        try:
-            pattern = r"joint_(\d+):\s*(-?[\d.]+)"
-            matches = re.findall(pattern, llm_output)
+#             # Assemble the vector in the correct order using the dictionary.
+#             # We use .get() to safely handle cases where a key might be missing.
+#             try:
+#                 vector = np.array([data_dict[key] for key in keys_in_order], dtype=np.float32)
+#                 delta_trans = vector[:3]  # x, y, z
+#                 delta_r = vector[3:6]  # roll, pitch, yaw
+#                 gripper_open = vector[-1]  # open
+#                 return delta_trans, delta_r, gripper_open
+#             except KeyError as e:
+#                 print(f"Error: Missing key {e} in the LLM output: {llm_output}")
+#                 return None
+#     elif action_type == ActionType.ABS_JOINT or action_type == ActionType.DELTA_JOINT:
+#         try:
+#             pattern = r"joint_(\d+):\s*(-?[\d.]+)"
+#             matches = re.findall(pattern, llm_output)
 
-            # --- NEW: Check if the number of found joints is correct ---
-            if len(matches) != 8:
-                raise ValueError(f"Expected 8 joints, but found {len(matches)}.")
+#             # --- NEW: Check if the number of found joints is correct ---
+#             if len(matches) != 8:
+#                 raise ValueError(f"Expected 8 joints, but found {len(matches)}.")
 
-            # Sort the matches based on the joint index to ensure correct order
-            sorted_matches = sorted(matches, key=lambda m: int(m[0]))
+#             # Sort the matches based on the joint index to ensure correct order
+#             sorted_matches = sorted(matches, key=lambda m: int(m[0]))
             
-            # --- Optional but robust: Check for duplicate or skipped joints ---
-            for i, match in enumerate(sorted_matches):
-                if int(match[0]) != i:
-                    raise ValueError(f"Joint index mismatch. Expected joint_{i} but found joint_{match[0]}. Check for duplicates or missing joints.")
+#             # --- Optional but robust: Check for duplicate or skipped joints ---
+#             for i, match in enumerate(sorted_matches):
+#                 if int(match[0]) != i:
+#                     raise ValueError(f"Joint index mismatch. Expected joint_{i} but found joint_{match[0]}. Check for duplicates or missing joints.")
 
-            # Extract the numeric values from the sorted list
-            joint_values = [float(match[1]) for match in sorted_matches]
-            joint_vector = np.array(joint_values, dtype=np.float32)
+#             # Extract the numeric values from the sorted list
+#             joint_values = [float(match[1]) for match in sorted_matches]
+#             joint_vector = np.array(joint_values, dtype=np.float32)
 
-            return joint_vector
+#             return joint_vector
 
-        except (ValueError, IndexError) as e:
-            # The error message will now be much more specific
-            print(f"Error: {e} in the LLM output: {llm_output}")
-            return None
-    else:
-        raise ValueError(f"Unsupported action type: {action_type}. Supported types are: {ActionType.DELTA_EEF}, {ActionType.ABS_EEF}, {ActionType.ABS_JOINT}.")
+#         except (ValueError, IndexError) as e:
+#             # The error message will now be much more specific
+#             print(f"Error: {e} in the LLM output: {llm_output}")
+#             return None
+#     else:
+#         raise ValueError(f"Unsupported action type: {action_type}. Supported types are: {ActionType.DELTA_EEF}, {ActionType.ABS_EEF}, {ActionType.ABS_JOINT}.")
 
 
 def compute_delta_eepose(pose1, pose2):

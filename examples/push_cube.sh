@@ -20,7 +20,8 @@ EXPERIMENT_NAME='push_cube_0'
 # SFT_MODEL_PATH="/mnt/nfs3/caozhe/workspace/SimpleVLA-RL/ckpts/SimpleVLA-RL/mani_legacy_0.1_nomask/2025-08-11_14-23-44/actor/global_step_1"
 # SFT_MODEL_PATH="/mnt/nfs3/caozhe/workspace/ManiSkill/vlav-project/train_push_cube500_legacy/internvl2-2b/v0-20250812-011657/checkpoint-2769"
 # SFT_MODEL_PATH="/mnt/nfs3/caozhe/workspace/SimpleVLA-RL/ckpts/SimpleVLA-RL/push_cube_0/2025-08-12_13-28-58/actor/global_step_0"
-SFT_MODEL_PATH="/mnt/nfs3/caozhe/workspace/SimpleVLA-RL/ckpts/SimpleVLA-RL/push_cube_0/2025-08-12_16-27-58/actor/global_step_1_0"
+# SFT_MODEL_PATH="/mnt/nfs3/caozhe/workspace/SimpleVLA-RL/ckpts/SimpleVLA-RL/push_cube_0/2025-08-12_16-27-58/actor/global_step_1_0"
+SFT_MODEL_PATH="/mnt/nfs3/caozhe/workspace/SimpleVLA-RL/vlav-project/train_push_cube500/internvl2-2b/v2-20250813-164406/checkpoint-4615"
 CKPT_PATH="./ckpts"
 # DATASET_NAME can be libero_10 (libero_Long), libero_90, libero_spatial, libero_object, libero_goal
 DATASET_NAME="maniskill"
@@ -41,8 +42,8 @@ HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=4,5,2,3 python -m verl.trainer.main_ppo 
     data.val_batch_size=120 \
     data.rob_dataset_kwargs.num_envs_seeds=240  \
     data.rob_dataset_kwargs.len_dataset=240 \
-    data.max_prompt_length=440 \
-    data.max_response_length=15 \
+    data.max_prompt_length=470 \
+    data.max_response_length=44 \
     data.rob_dataset_kwargs.task_ids='["PushCube-v1"]'   \
     actor_rollout_ref.actor.strategy=dp \
     critic.strategy=dp  \
@@ -51,9 +52,9 @@ HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=4,5,2,3 python -m verl.trainer.main_ppo 
     actor_rollout_ref.model.path=$SFT_MODEL_PATH \
     actor_rollout_ref.model.legacy_action=True \
     actor_rollout_ref.model.vla=$VLA_NAME \
-    actor_rollout_ref.model.action_token_len=15 \
+    actor_rollout_ref.model.action_token_len=44 \
     actor_rollout_ref.model.action_chunks_len=1 \
-    actor_rollout_ref.actor.optim.lr=5e-5 \
+    actor_rollout_ref.actor.optim.lr=2e-5 \
     actor_rollout_ref.actor.optim.warmup_style=constant \
     actor_rollout_ref.actor.ppo_mini_batch_size=128 \
     actor_rollout_ref.actor.ppo_micro_batch_size=$NUM_GPUS \
@@ -74,7 +75,7 @@ HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=4,5,2,3 python -m verl.trainer.main_ppo 
     actor_rollout_ref.rollout.model_family=internvl_chat \
     actor_rollout_ref.rollout.task_suite_name=$DATASET_NAME \
     actor_rollout_ref.rollout.pretrained_checkpoint=$SFT_MODEL_PATH \
-    actor_rollout_ref.rollout.max_prompt_length=440 \
+    actor_rollout_ref.rollout.max_prompt_length=470 \
     actor_rollout_ref.rollout.log_prob_micro_batch_size=32 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.name=hf \
@@ -98,8 +99,8 @@ HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=4,5,2,3 python -m verl.trainer.main_ppo 
     algorithm.adv_params.reward_model_gamma=1.0 \
     trainer.runtime_env=$ALIGN_PATH \
     trainer.wandb_mode=online \
-    trainer.global_steps=2  \
-    trainer.val_before_train=False \
+    trainer.global_steps=0  \
+    trainer.val_before_train=True \
     # trainer.wandb_kwargs.id=4yq04sq5    \
 
 

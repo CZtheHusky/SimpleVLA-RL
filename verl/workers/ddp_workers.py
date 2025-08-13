@@ -200,7 +200,7 @@ class RobActorRolloutRefWorker(Worker):
                 config=actor_model_config,
                 trust_remote_code=True,
             )
-            processor_list, valid_list = prepare_logits_processor(self.config.model.legacy_action, self.tokenizer)
+            processor_list, valid_list, response_token_num = prepare_logits_processor(self.tokenizer)
             generation_config = dict(logits_processor=processor_list)
             if self.config.model.get("mask_logits", False):
                 print(f"Masking irrelevant logits")

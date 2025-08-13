@@ -29,7 +29,6 @@ actor_rollout_ref:
   hybrid_engine: True
   model:
     vla: internvl_chat
-    legacy_action: False
     mask_logits: False
     action_token_len: 16  # 16
     action_chunks_len: 1

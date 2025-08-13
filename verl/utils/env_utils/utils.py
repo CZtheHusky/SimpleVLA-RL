@@ -372,7 +372,10 @@ def action_decode(prompts, string_response, task_suite: TaskSuite, **process_kwa
             # print(f"decoded action shape: {actions.shape}")
     return actions, total, errors
         
-
+def quat_to_rpy(quaternion, degrees: bool = True):
+    rotation_object = R.from_quat([quaternion[1], quaternion[2], quaternion[3], quaternion[0]])
+    rpy = rotation_object.as_euler('xyz', degrees=degrees)
+    return rpy
 
 def assemble_action_vla(
     action_extracted: np.ndarray,
@@ -764,11 +767,11 @@ def pose_to_transform(pose):
     transform[:3, :3] = R.from_quat(quat[[1, 2, 3, 0]]).as_matrix() # from [w,x,y,z] to [x,y,z,w]
     return transform
 
-def quat_to_rpy(pose: Tuple[np.ndarray, np.ndarray], degrees: bool = True) -> Tuple[np.ndarray, np.ndarray]:
-    translation, quaternion = pose
-    rotation_object = R.from_quat([quaternion[1], quaternion[2], quaternion[3], quaternion[0]])
-    rpy = rotation_object.as_euler('xyz', degrees=degrees)
-    return translation, rpy
+# def quat_to_rpy(pose: Tuple[np.ndarray, np.ndarray], degrees: bool = True) -> Tuple[np.ndarray, np.ndarray]:
+#     translation, quaternion = pose
+#     rotation_object = R.from_quat([quaternion[1], quaternion[2], quaternion[3], quaternion[0]])
+#     rpy = rotation_object.as_euler('xyz', degrees=degrees)
+#     return translation, rpy
 
 def rpy_to_quat(pose: Tuple[np.ndarray, np.ndarray], degrees: bool = True) -> Tuple[np.ndarray, np.ndarray]:
     trans, rpy = pose

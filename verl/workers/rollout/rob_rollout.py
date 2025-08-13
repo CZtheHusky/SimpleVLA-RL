@@ -101,7 +101,7 @@ class RobHFRollout(BaseRollout):
             self.env_type = ENV_TYPE.VENV
             self.max_steps = {
                 "StackCube-v1": 150,
-                "PushCube-v1": 100,
+                "PushCube-v1": 75,
             }
             from verl.workers.rollout.env_workers.maniskill_env_worker import env_worker, EnvActor
             self.env_actor = EnvActor(pid=os.getpid(), execute_horizon=config.horizon)
@@ -725,6 +725,7 @@ class RobHFRollout(BaseRollout):
             attention_mask = torch.cat((attention_mask, response_attention_mask), dim=-1)
             assert self.processor.pad_token_id is not None
             assert input_ids.ndim == 2
+            assert input_ids.shape[-1] <= self.config.max_prompt_length, f"Input ids length {input_ids.shape[-1]} exceeds max prompt length {self.config.max_prompt_length}."
             input_ids = verl_F.pad_sequence_to_length(input_ids, max_seq_len=self.config.max_prompt_length, pad_token_id=self.processor.pad_token_id, left_pad=True)
             assert full_seq.ndim == 2
             full_seq = verl_F.pad_sequence_to_length(full_seq, max_seq_len=self.config.max_prompt_length, pad_token_id=self.processor.pad_token_id, left_pad=True)

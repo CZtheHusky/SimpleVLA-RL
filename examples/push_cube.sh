@@ -34,7 +34,7 @@ ALIGN_PATH="align.json"
 HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=4,5,2,3 python -m verl.trainer.main_ppo \
     data.task_suite_name=$DATASET_NAME \
     data.n_samples=8 \
-    data.filter_accuracy=True \
+    data.filter_accuracy=False \
     data.accuracy_lower_bound=0.1 \
     data.accuracy_upper_bound=0.9 \
     data.oversample_factor=1 \
@@ -50,7 +50,6 @@ HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=4,5,2,3 python -m verl.trainer.main_ppo 
     reward_model.strategy=dp \
     actor_rollout_ref.rollout.dual_cam=False    \
     actor_rollout_ref.model.path=$SFT_MODEL_PATH \
-    actor_rollout_ref.model.legacy_action=True \
     actor_rollout_ref.model.vla=$VLA_NAME \
     actor_rollout_ref.model.action_token_len=44 \
     actor_rollout_ref.model.action_chunks_len=1 \

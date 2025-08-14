@@ -612,6 +612,7 @@ class RayTrainer(object):
                             filtered_roll_batch = self.filter(roll_batch.batch['acc'].unsqueeze(1), roll_batch, n_samples)
                             # print(f"after filtering: {len(filtered_roll_batch)}")
                         else:
+                            self.get_acc_distribution(roll_batch.batch['acc'].unsqueeze(1), n_samples)
                             filtered_roll_batch = roll_batch
                     metrics['timing/acc&trunc_filter'] += timer.last
 
@@ -842,6 +843,13 @@ class RayTrainer(object):
         print(f"Filtered format batch size: {len(filtered_batch)} (from original size: {len(batch)})")
         
         return filtered_batch
+    
+    
+    def get_acc_distribution(self, reward_tensor, n_samples):
+        reward_matrix = reward_tensor.sum(-1).reshape(-1, n_samples)
+        acc_tensor = torch.mean(reward_matrix, dim=-1)
+        counts = Counter(acc_tensor.tolist())
+        print("Accuracy distribution:", " ".join(f"{k:.2f}:{v}" for k, v in sorted(counts.items())))
 
     def filter(self, reward_tensor, batch, n_samples):
         """

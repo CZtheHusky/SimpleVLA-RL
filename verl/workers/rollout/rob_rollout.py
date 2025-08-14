@@ -707,6 +707,7 @@ class RobHFRollout(BaseRollout):
                     **self.generation_config,
                 )
             full_seq = torch.concatenate((input_ids, generation_output), dim=-1)
+            # print(full_seq.shape[-1])
             responses = tokenizer.batch_decode(generation_output, skip_special_tokens=True)
             try:
                 cur_response_length = generation_output.shape[-1]

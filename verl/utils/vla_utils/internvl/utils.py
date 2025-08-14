@@ -8,6 +8,43 @@ import torch
 from transformers.generation.logits_process import PrefixConstrainedLogitsProcessor, LogitsProcessor
 import math
 from transformers import LogitsProcessorList
+import torch.nn.functional as F
+from verl.utils.torch_functional import logprobs_from_logits, entropy_from_logits
+
+def logits2_logprobs_entropy(
+    logits: torch.Tensor,
+    responses: torch.Tensor, 
+    valid_index2token_id_list: dict = None,
+):
+    if valid_index2token_id_list is not None:
+        B, L, V = logits.shape
+        device = logits.device
+        positions = list(valid_index2token_id_list.keys())
+        logprob_out = []
+        entropy_out = []
+        for t in positions:
+            ids_tensor = valid_index2token_id_list[t]
+            assert len(ids_tensor) > 0, f"ids_tensor should not be empty for position {t}, got {ids_tensor}"
+            ids_tensor = ids_tensor.to(device)
+            filtered_logits = logits[:, t, ids_tensor]            # [B, K]
+            current_entropy = entropy_from_logits(filtered_logits)          # [B]
+            logp_allowed = F.log_softmax(filtered_logits, dim=-1) # [B, K]
+
+            resp_ids = responses[:, t]                             # [B]
+            match = (ids_tensor.unsqueeze(0) == resp_ids.unsqueeze(1))  # [B, K]
+            has_match = match.any(dim=1)                           # [B]
+            assert has_match.all(), f"Not all positions have a match, got {has_match}"
+            local_idx = match.float().argmax(dim=1)                # [B]（无匹配时是0，但会被 has_match 掩掉）
+
+            chosen = logp_allowed[torch.arange(B, device=device), local_idx]  # [B]
+            logprob_out.append(chosen)
+            entropy_out.append(current_entropy)
+
+        # [B, len(positions)]
+        return torch.stack(logprob_out, dim=-1), torch.stack(entropy_out, dim=-1)
+    else:
+        return logprobs_from_logits(logits, responses), entropy_from_logits(logits)
+        
 
 
 class SafePrefixConstrainedLogitsProcessor(PrefixConstrainedLogitsProcessor):
@@ -34,6 +71,7 @@ def prepare_logits_processor(tokenizer):
     action_token_num = len(toks)
     index2list = {}
     numbers_index = [6, 12, 18, 24, 30, 36, 42]
+    valid_index2token_list = {}
     valid_list = []
     for idx, (tok, token_idx) in enumerate(zip(toks, ids)):
         index2list[idx] = [token_idx]
@@ -55,6 +93,8 @@ def prepare_logits_processor(tokenizer):
     for idx in numbers_index:
         index2list[idx] = numbers_list
         index2list[idx - 1] = connect_list
+        valid_index2token_list[idx - 1] = torch.as_tensor(connect_list, dtype=torch.long) 
+        valid_index2token_list[idx] = torch.as_tensor(numbers_list, dtype=torch.long)
     prefix_processor = SafePrefixConstrainedLogitsProcessor(
             prefix_allowed_tokens_fn=generate_prefix_fn(index2list),
             num_beams=1,
@@ -65,7 +105,7 @@ def prepare_logits_processor(tokenizer):
     valid_list.update(numbers_list)
     valid_list.update(connect_list)
     valid_list = list(valid_list)
-    return processor_list, valid_list, action_token_num
+    return processor_list, valid_list, action_token_num, numbers_index, valid_index2token_list
 
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)

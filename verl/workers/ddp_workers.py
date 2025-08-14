@@ -200,12 +200,18 @@ class RobActorRolloutRefWorker(Worker):
                 config=actor_model_config,
                 trust_remote_code=True,
             )
-            processor_list, valid_list, response_token_num = prepare_logits_processor(self.tokenizer)
+            processor_list, valid_list, response_token_num, numbers_index, valid_index2token_id_list = prepare_logits_processor(self.tokenizer)
+            valid_token_index = []
+            for num in numbers_index:
+                valid_token_index.append(num)
+                valid_token_index.append(num - 1)
+            self.valid_token_index = valid_token_index
+            self.valid_index2token_id_list = valid_index2token_id_list
             generation_config = dict(logits_processor=processor_list)
-            if self.config.model.get("mask_logits", False):
-                print(f"Masking irrelevant logits")
-                self.logger.log(f"Masking irrelevant logits")
-                actor_module.set_action_allowed_list(valid_list)
+            # if self.config.model.get("mask_logits", False):
+            #     print(f"Masking irrelevant logits")
+            #     self.logger.log(f"Masking irrelevant logits")
+            #     actor_module.set_action_allowed_list(valid_list)
             actor_module.set_action_generation_config(generation_config)
             
         actor_module.to(torch_dtype).cuda(self.local_device)
@@ -328,7 +334,8 @@ class RobActorRolloutRefWorker(Worker):
             self.actor = RobDataParallelPPOActor(config=self.config.actor,
                                               actor_module=self.actor_module_ddp,
                                               actor_optimizer=self.actor_optimizer,
-                                              logger=self.logger
+                                              logger=self.logger,
+                                              valid_index2token_id_list=getattr(self, 'valid_index2token_id_list', None),
                                               )
 
         if self._is_rollout:
@@ -533,9 +540,9 @@ class RobActorRolloutRefWorker(Worker):
                     print(f'Uploading actor checkpoint to {hdfs_path}')
                     hdfs_io.makedirs(hdfs_path, exist_ok=True)
                     hdfs_io.copy(src=local_path, dst=hdfs_path)
-            torch.distributed.barrier()
-            if isinstance(self.actor_optimizer, optim.AdamW):
-                torch.save(self.actor_optimizer.state_dict(), os.path.join(local_path, f'actor_optimizer_{self.rank}.pt'))
+            # torch.distributed.barrier()
+            # if isinstance(self.actor_optimizer, optim.AdamW):
+            #     torch.save(self.actor_optimizer.state_dict(), os.path.join(local_path, f'actor_optimizer_{self.rank}.pt'))
                 
             # tmp_local_path = f"{local_path}_{self.rank}"
             # print(f'Saving actor checkpoint to {tmp_local_path}')

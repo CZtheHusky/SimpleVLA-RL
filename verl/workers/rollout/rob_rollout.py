@@ -288,6 +288,7 @@ class RobHFRollout(BaseRollout):
                 vla_output["responses"][mask] = tmp_vla_output["responses"]
                 vla_output["input_ids"][mask] = tmp_vla_output["input_ids"]
                 vla_output["attention_mask"][mask] = tmp_vla_output["attention_mask"]
+                vla_output['pixel_values'][mask] = tmp_vla_output['pixel_values']
                 if self.horizon == 1:
                     vec_action[mask_cpu] = tmp_vec_action 
                 else:
@@ -376,147 +377,7 @@ class RobHFRollout(BaseRollout):
         self.logger.log(f"Rollout, after empty cache, {gpu_memory()}")
         self._check_futures()
         return output_batch
-     
-     
-    def _generate_minibatch_libero(self, prompts):
-        self.module.eval()
-        meta_info = prompts.meta_info
-        n_samples = meta_info.get('n_samples', 1)
-        task_id = prompts.batch['task_id'].repeat_interleave(n_samples, dim=0)
-        trial_id = prompts.batch['trial_id'].repeat_interleave(n_samples, dim=0)
-        task_suite_name = np.repeat(prompts.non_tensor_batch['task_suite_name'], n_samples)
-        max_steps = self.max_steps[self.config.task_suite_name]
-        batch_size = task_id.size(0)    # Num of grpo samples
-        is_valid = meta_info.get('n_samples') is None
-        global_steps = meta_info.get('global_steps', 0) if is_valid else 0
-        
-        processes = []
-        input_queues = []
-        output_queues = []
-        
-        for idx in range(batch_size):
-            task_name = task_suite_name[idx]
-            t_id = task_id[idx][0].item()
-            tr_id = trial_id[idx][0].item()
-            input_q = Queue()
-            output_q = Queue()
-            p = Process(
-                target=self.env_worker,
-                args=(task_name, t_id, tr_id, self.config, input_q, output_q, is_valid, global_steps, max_steps)
-            )
-            p.start()
-            processes.append(p)
-            input_queues.append(input_q)
-            output_queues.append(output_q)
-        
-        inputs = []
-        task_descriptions = []
-        task_records = []
-        valid_video = defaultdict(list)
-        for idx in range(batch_size):
-            init_data = output_queues[idx].get(timeout=120)
-            assert init_data['type'] == 'init'
-            task_descriptions.append(init_data["task_description"])
-            inputs.append(self._obs_to_input(init_data['obs']))
-            task_records.append({
-                "active": init_data['active'],
-                "complete": init_data['complete'],
-                "finish_step": init_data['finish_step'],
-                "task_file_name": init_data['task_file_name']
-            })
-            if is_valid:
-                valid_video[init_data['task_file_name']].extend(init_data['valid_images'])
-        
-        step = 0
-        vla_history = []
-        while step < max_steps:
-            active_indices = [i for i, r in enumerate(task_records) if r['active']]
-            
-            current_inputs = inputs
-            current_task_descriptions = task_descriptions
-           
-            vla_input = self.process_input(current_inputs, current_task_descriptions)
-            vla_input.update(meta_info)
-            vla_output = self._generate_one_step(vla_input)
-            actions = vla_output["action"]
-            
-            step_data = {
-                    "responses": vla_output["responses"],
-                    "input_ids": vla_output["input_ids"],
-                    "attention_mask": vla_output["attention_mask"],
-                    "pixel_values": vla_output["pixel_values"],
-                    "action": actions,
-                    "step": step
-                }
-            vla_history.append(step_data)
-            
-            for idx in active_indices:
-                input_queues[idx].put(actions[idx])
-            
-            new_inputs = inputs.copy()
-            for idx in active_indices:
-                result = output_queues[idx].get(timeout=30)
-                assert result['type'] == 'step'
-                new_inputs[idx] = self._obs_to_input(result['obs'])
-                task_records[idx]['active'] = result['active']
-                task_records[idx]['complete'] = result['complete']
-                task_records[idx]['finish_step'] = result['finish_step']
-                if is_valid:
-                    valid_video[task_records[idx]['task_file_name']].extend(result['valid_images'])
-            
-            inputs = new_inputs
-            step += self.config.action_chunks_len
-            
-        for q in input_queues:
-            q.put(None)
-        for p in processes:
-            p.join(timeout=20)
-            if p.is_alive():
-                p.terminate()
-        
-        torch.cuda.empty_cache()
-        
-        if is_valid:
-            for task_file, images in valid_video.items():
-                complete = any(r['complete'] for r in task_records if r['task_file_name'] == task_file)
-                save_rollout_video(
-                    images,
-                    self.config.experiment_name,
-                    task_file,
-                    global_steps,
-                    complete
-                )
-        
-        self.module.train()
-        
-        batch = {
-                'responses': [],
-                'input_ids': [],  # here input_ids become the whole sentences
-                'attention_mask': [],
-                'pixel_values': []
-            }
-        for k in ["responses", "input_ids", "attention_mask", "pixel_values"]:
-            for h in vla_history:
-                batch[k].append(h[k])
-        
-        for k,v in batch.items():
-            batch[k] = torch.stack(v,dim=1) 
-  
-        batch["complete"] = []
-        batch["finish_step"] = []
-        
-        for k in task_records:
-            batch["complete"].append(k["complete"])
-            batch["finish_step"].append(k["finish_step"])
-        
-        batch["complete"] = torch.tensor(batch["complete"], dtype=torch.bool, device=batch['responses'].device)
-        batch["finish_step"] = torch.tensor(batch["finish_step"], dtype=torch.int64, device=batch['responses'].device)
-        
-        output_batch = TensorDict(
-            batch,
-            batch_size=batch_size)
-        return DataProto(batch=output_batch)
-    
+
     @torch.no_grad()
     def _generate_one_step(self, prompts: dict, step=None):
         
@@ -673,7 +534,7 @@ class RobHFRollout(BaseRollout):
             num_patches_list = prompts['num_patches_list']
             
             top_p = prompts.get('top_p', self.config.get('top_p', 1.0))
-            top_k = prompts.get('top_k', self.config.get('top_k', 0))
+            top_k = prompts.get('top_k', self.config.get('top_k', 50))
             temperature = prompts.get('temperature', self.config.temperature)
             queries = []
             for idx, num_patches in enumerate(num_patches_list):
@@ -696,6 +557,7 @@ class RobHFRollout(BaseRollout):
             eos_token_id = tokenizer.convert_tokens_to_ids(template.sep.strip())
             with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
                 pixel_values = pixel_values.to('cuda').to(torch.bfloat16)
+                # breakpoint()
                 generation_output = self.module.generate(
                     pixel_values=pixel_values,
                     input_ids=input_ids,
@@ -761,4 +623,145 @@ class RobHFRollout(BaseRollout):
                     obs["robot0_gripper_qpos"]
                 ])
             }
+
+     
+     
+    def _generate_minibatch_libero(self, prompts):
+        self.module.eval()
+        meta_info = prompts.meta_info
+        n_samples = meta_info.get('n_samples', 1)
+        task_id = prompts.batch['task_id'].repeat_interleave(n_samples, dim=0)
+        trial_id = prompts.batch['trial_id'].repeat_interleave(n_samples, dim=0)
+        task_suite_name = np.repeat(prompts.non_tensor_batch['task_suite_name'], n_samples)
+        max_steps = self.max_steps[self.config.task_suite_name]
+        batch_size = task_id.size(0)    # Num of grpo samples
+        is_valid = meta_info.get('n_samples') is None
+        global_steps = meta_info.get('global_steps', 0) if is_valid else 0
+        
+        processes = []
+        input_queues = []
+        output_queues = []
+        
+        for idx in range(batch_size):
+            task_name = task_suite_name[idx]
+            t_id = task_id[idx][0].item()
+            tr_id = trial_id[idx][0].item()
+            input_q = Queue()
+            output_q = Queue()
+            p = Process(
+                target=self.env_worker,
+                args=(task_name, t_id, tr_id, self.config, input_q, output_q, is_valid, global_steps, max_steps)
+            )
+            p.start()
+            processes.append(p)
+            input_queues.append(input_q)
+            output_queues.append(output_q)
+        
+        inputs = []
+        task_descriptions = []
+        task_records = []
+        valid_video = defaultdict(list)
+        for idx in range(batch_size):
+            init_data = output_queues[idx].get(timeout=120)
+            assert init_data['type'] == 'init'
+            task_descriptions.append(init_data["task_description"])
+            inputs.append(self._obs_to_input(init_data['obs']))
+            task_records.append({
+                "active": init_data['active'],
+                "complete": init_data['complete'],
+                "finish_step": init_data['finish_step'],
+                "task_file_name": init_data['task_file_name']
+            })
+            if is_valid:
+                valid_video[init_data['task_file_name']].extend(init_data['valid_images'])
+        
+        step = 0
+        vla_history = []
+        while step < max_steps:
+            active_indices = [i for i, r in enumerate(task_records) if r['active']]
             
+            current_inputs = inputs
+            current_task_descriptions = task_descriptions
+           
+            vla_input = self.process_input(current_inputs, current_task_descriptions)
+            vla_input.update(meta_info)
+            vla_output = self._generate_one_step(vla_input)
+            actions = vla_output["action"]
+            
+            step_data = {
+                    "responses": vla_output["responses"],
+                    "input_ids": vla_output["input_ids"],
+                    "attention_mask": vla_output["attention_mask"],
+                    "pixel_values": vla_output["pixel_values"],
+                    "action": actions,
+                    "step": step
+                }
+            vla_history.append(step_data)
+            
+            for idx in active_indices:
+                input_queues[idx].put(actions[idx])
+            
+            new_inputs = inputs.copy()
+            for idx in active_indices:
+                result = output_queues[idx].get(timeout=30)
+                assert result['type'] == 'step'
+                new_inputs[idx] = self._obs_to_input(result['obs'])
+                task_records[idx]['active'] = result['active']
+                task_records[idx]['complete'] = result['complete']
+                task_records[idx]['finish_step'] = result['finish_step']
+                if is_valid:
+                    valid_video[task_records[idx]['task_file_name']].extend(result['valid_images'])
+            
+            inputs = new_inputs
+            step += self.config.action_chunks_len
+            
+        for q in input_queues:
+            q.put(None)
+        for p in processes:
+            p.join(timeout=20)
+            if p.is_alive():
+                p.terminate()
+        
+        torch.cuda.empty_cache()
+        
+        if is_valid:
+            for task_file, images in valid_video.items():
+                complete = any(r['complete'] for r in task_records if r['task_file_name'] == task_file)
+                save_rollout_video(
+                    images,
+                    self.config.experiment_name,
+                    task_file,
+                    global_steps,
+                    complete
+                )
+        
+        self.module.train()
+        
+        batch = {
+                'responses': [],
+                'input_ids': [],  # here input_ids become the whole sentences
+                'attention_mask': [],
+                'pixel_values': []
+            }
+        for k in ["responses", "input_ids", "attention_mask", "pixel_values"]:
+            for h in vla_history:
+                batch[k].append(h[k])
+        
+        for k,v in batch.items():
+            batch[k] = torch.stack(v,dim=1) 
+  
+        batch["complete"] = []
+        batch["finish_step"] = []
+        
+        for k in task_records:
+            batch["complete"].append(k["complete"])
+            batch["finish_step"].append(k["finish_step"])
+        
+        batch["complete"] = torch.tensor(batch["complete"], dtype=torch.bool, device=batch['responses'].device)
+        batch["finish_step"] = torch.tensor(batch["finish_step"], dtype=torch.int64, device=batch['responses'].device)
+        
+        output_batch = TensorDict(
+            batch,
+            batch_size=batch_size)
+        return DataProto(batch=output_batch)
+    

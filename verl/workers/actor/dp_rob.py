@@ -30,7 +30,7 @@ from verl.workers.actor import BasePPOActor
 from verl.utils.debug import gpu_memory
 from verl.utils.py_functional import append_to_dict
 from verl.utils.torch_functional import logprobs_from_logits, log_probs_from_logits_all_rmpad
-from verl.utils.vla_utils.internvl.utils import logits2_logprobs_entropy
+from verl.utils.vla_utils.internvl.utils import logits2_logprobs_entropy, debug_logits2_logprobs_entropy
 from verl.utils.seqlen_balancing import rearrange_micro_batches, get_reverse_idx
 import verl.utils.torch_functional as verl_F
 from codetiming import Timer
@@ -66,7 +66,7 @@ class RobDataParallelPPOActor(BasePPOActor):
         actor_module: nn.Module,
         actor_optimizer: torch.optim.Optimizer = None,
         logger=None,
-        valid_index2token_id_list=None,
+        internvl_help_kwargs=None,
     ):
         """When optimizer is None, it is Reference Policy"""
         super().__init__(config)
@@ -84,14 +84,15 @@ class RobDataParallelPPOActor(BasePPOActor):
             self.rank = torch.distributed.get_rank()
         else:
             self.rank = 0
-        if valid_index2token_id_list is not None:
-            self.valid_token_index = list(valid_index2token_id_list.keys())
-            self.action_token_len = len(self.valid_token_index)
+        valid_token_index = internvl_help_kwargs.get('valid_token_index', None) if internvl_help_kwargs is not None else None
+        if valid_token_index is not None:
+            self.action_token_len = len(valid_token_index)
         else:
             self.action_token_len = self.config.action_token_len
-        self.valid_index2token_id_list = valid_index2token_id_list
+        self.valid_token_index = valid_token_index
         assert self.action_token_len > 0, f"action_token_len should be greater than 0, got {self.action_token_len}"
-        # self.debug_logits = []
+        self.internvl_help_kwargs = internvl_help_kwargs if internvl_help_kwargs is not None else {}
+        self.debug_logits = []
         
     
     def process_tensor(self, tensor: torch.Tensor, pad_id: int, no_padding=False):
@@ -265,7 +266,7 @@ class RobDataParallelPPOActor(BasePPOActor):
                         use_cache=False  # pure forward
                     )
                     # Extract only the response-length slice and scale
-                    lg = out.logits[:, -response_length - 1:-1].div(temperature)
+                    lg = out.logits[:, -response_length - 1:-1]
                     logits_list.append(lg)
 
                 # Concatenate all chunks: shape (B*T, response_length)
@@ -274,7 +275,7 @@ class RobDataParallelPPOActor(BasePPOActor):
                 # Compute log-probs and entropy
                 # log_probs = logprobs_from_logits(logits_flat, responses)
                 # entropy = verl_F.entropy_from_logits(logits_flat)
-                log_probs, entropy = logits2_logprobs_entropy(logits_flat, responses, self.valid_index2token_id_list)
+                log_probs, entropy = logits2_logprobs_entropy(logits_flat, responses, **self.internvl_help_kwargs)
                 
                 log_probs = log_probs.reshape((batch_size, traj_len,) + log_probs.shape[1:])
                 entropy = entropy.reshape((batch_size, traj_len,) + entropy.shape[1:])
@@ -282,16 +283,12 @@ class RobDataParallelPPOActor(BasePPOActor):
                 mask = self.generate_traj_mask(micro_batch['finish_step'], traj_len)
                 log_probs, entropy = self.apply_mask_with_grad_control(log_probs, entropy, mask)
                 
-                log_probs = log_probs.reshape((batch_size, -1))
-                entropy = entropy.reshape((batch_size, -1))
-                # if self.valid_index2token_id_list is None:
-                #     log_probs = log_probs.reshape((log_probs.shape[0], traj_len, self.config.action_chunks_len, self.config.action_token_len))
-                #     log_probs = log_probs[..., self.valid_token_index]  # Filter logits to only valid tokens
-                #     log_probs = log_probs.reshape((log_probs.shape[0], -1))  # Reshape to (B*T, action_token_len)
-                
-                
+                log_probs = log_probs.reshape((batch_size, traj_len * self.action_token_len))
+                entropy = entropy.reshape((batch_size, traj_len * self.action_token_len))
+                                
                 if traj_level:
-                    filterd_response_length = response_length if self.valid_index2token_id_list is None else self.action_token_len * self.config.action_chunks_len
+                    assert self.action_token_len * self.config.action_chunks_len == response_length, f"action_token_len * action_chunks_len should be equal to response_length, got {self.action_token_len} * {self.config.action_chunks_len} != {response_length}"
+                    filterd_response_length = self.action_token_len * self.config.action_chunks_len
                     log_probs = log_probs.sum(dim=-1) / (mask.sum(dim=-1) * filterd_response_length)
                     # entropy = entropy.sum(dim=-1) / (mask.sum(dim=-1) * filterd_response_length)
 
@@ -367,26 +364,20 @@ class RobDataParallelPPOActor(BasePPOActor):
                                         pixel_values=pixel_values,
                                         use_cache=False)  # prevent model thinks we are generating
                 logits = output.logits
-                # self._last_logits = logits.cpu()
+                self._last_logits = logits.cpu()
                 logits = logits[:, -response_length - 1:-1]  # (bsz, response_length)
-                logits = logits.div(temperature) 
                 
                 # log_probs = logprobs_from_logits(logits, responses)
                 # entropy = verl_F.entropy_from_logits(logits)  # (bsz, response_length)
                 
-                
-                # log_probs = log_probs.reshape((1, -1))
-                # entropy = entropy.reshape((1, -1))
-                # if self.valid_index2token_id_list is None:
-                #     log_probs = log_probs.reshape((1, -1, self.config.action_chunks_len, self.config.action_token_len))
-                #     log_probs = log_probs[..., self.valid_token_index]  # Filter logits to only valid tokens
-                #     log_probs = log_probs.reshape((1, -1))  # Reshape to (B*T, action_token_len)
-                log_probs, entropy = logits2_logprobs_entropy(logits, responses, self.valid_index2token_id_list)
+                log_probs, entropy = logits2_logprobs_entropy(logits, responses, **self.internvl_help_kwargs)
                 log_probs = log_probs.reshape((1, -1))
+                entropy = entropy.reshape((1, -1))
                 return entropy, log_probs
                 
 
     def _forward_micro_batch_entropy(self, micro_batch, temperature) -> Tuple[torch.Tensor, torch.Tensor]:
+        raise ValueError("behavior in current function is not compatible with the new internvl_chat")
         batch_size = micro_batch['responses'].size(0)
         traj_len = micro_batch['responses'].size(1)
         tot_pad_len = micro_batch['input_ids'].size(2)
@@ -608,10 +599,7 @@ class RobDataParallelPPOActor(BasePPOActor):
                 for test_idx, data in enumerate(micro_batches): # there is only one trajectory in each micro_batch, bs == 1
                     data = data.cuda()  # actor device is cpu when using offload
                     responses = data['responses']
-                    if self.valid_index2token_id_list is None:
-                        response_length = responses.size(1) *  self.action_token_len * self.config.action_chunks_len
-                    else:
-                        response_length = responses.size(1) *  responses.size(2)
+                    response_length = responses.size(1) *  self.action_token_len * self.config.action_chunks_len
                     finish_step = data['finish_step'] * self.action_token_len
                     steps = torch.arange(response_length, device=data['responses'].device)  # (traj_len,)
                     steps_expanded = steps.unsqueeze(0).expand(data['responses'].size(0), -1)
@@ -713,9 +701,9 @@ class RobDataParallelPPOActor(BasePPOActor):
 
     def update_policy_token(self, data: DataProto):
         data = data.to('cuda')
-        # self.debug_logits = []
+        self.debug_logits = []
         old_log_probs = self.compute_log_prob(data)
-        # self.debug_logits = torch.cat(self.debug_logits, dim=0)
+        self.debug_logits = torch.cat(self.debug_logits, dim=0)
         data.batch['old_log_probs'] = old_log_probs
         self.actor_module.train()
         # if self.rank == 0: breakpoint()
@@ -746,10 +734,7 @@ class RobDataParallelPPOActor(BasePPOActor):
             for test_idx, data in enumerate(micro_batches):
                 data = data.cuda()  # actor device is cpu when using offload
                 responses = data['responses']
-                if self.valid_index2token_id_list is None:
-                    response_length = responses.size(1) *  self.action_token_len * self.config.action_chunks_len
-                else:
-                    response_length = responses.size(1) *  responses.size(2)
+                response_length = responses.size(1) *  self.action_token_len * self.config.action_chunks_len
                 finish_step = data['finish_step'] * self.action_token_len
                 steps = torch.arange(response_length, device=data['responses'].device)  # (traj_len,)
                 steps_expanded = steps.unsqueeze(0).expand(data['responses'].size(0), -1)
@@ -757,10 +742,9 @@ class RobDataParallelPPOActor(BasePPOActor):
                 
                 response_mask_sum = response_mask.sum(axis=None)
 
-
                 # bs traj_len * response_len
                 old_log_prob = data['old_log_probs']
-                if self.valid_index2token_id_list is None:
+                if self.valid_token_index is not None:
                     advantages = data['advantages'].view(*responses.shape[:2], self.config.action_chunks_len, self.config.action_token_len)
                     advantages = advantages[..., self.valid_token_index]  # select the valid tokens
                     advantages = advantages.reshape(advantages.size(0), -1)  # (batch_size, response_length * action_chunks_len)
@@ -800,7 +784,7 @@ class RobDataParallelPPOActor(BasePPOActor):
                 # B L -> B * L
                 num_chunks = len(id_chunks)
                 for i, id_ch, attn_ch, pv_ch, res_ch in zip(range(0, traj_len, self.config.traj_mini_batch_size), id_chunks, attn_chunks, pv_chunks, resp_chunks):
-                    ctx = (self.actor_module.no_sync() if i < num_chunks - 1 else contextlib.nullcontext())
+                    ctx = (self.actor_module.no_sync() if i < traj_len - 1 else contextlib.nullcontext())
                     with ctx:   
                         # 1 split_size * response_len
                         # tmp_entropy, tmp_log_probs = self._forward_micro_batch({"responses": res_ch.unsqueeze(1), "input_ids": id_ch.unsqueeze(1), "attention_mask": attn_ch.unsqueeze(1), "pixel_values": pv_ch.unsqueeze(1), "finish_step": torch.ones((1, 1), dtype=id_ch.dtype, device=id_ch.device)}, temperature=1)
@@ -827,7 +811,7 @@ class RobDataParallelPPOActor(BasePPOActor):
                                                                                 clip_ratio_high=clip_ratio_high,
                                                                                 clip_ratio_low=clip_ratio_low)
                         # if pg_loss >= 500:
-                        #     breakpoint()
+                            # breakpoint()
                         pg_loss = pg_loss * response_mask_tmp_sum / response_mask_sum
                         pg_clipfrac = pg_clipfrac * response_mask_tmp_sum / response_mask_sum
                         ppo_kl = ppo_kl * response_mask_tmp_sum / response_mask_sum
@@ -858,7 +842,39 @@ class RobDataParallelPPOActor(BasePPOActor):
         torch.cuda.empty_cache()
         self.logger.log(f"after final empty_cache: {gpu_memory()}")
         return metrics
-
+    
+    def debug_process(self, log_prob, old_log_prob_tmp, res_ch, i, batch_idx, test_idx):
+        log_prob = log_prob.view(-1)
+        old_log_prob_tmp = old_log_prob_tmp.view(-1)
+        neg_log = log_prob - old_log_prob_tmp
+        max_index = neg_log.argmax()
+        print(max_index.item(), neg_log[max_index].item(), log_prob[max_index].item(), old_log_prob_tmp[max_index].item())
+        for idx, (n, l, ol) in enumerate(zip(neg_log, log_prob, old_log_prob_tmp)): 
+            print(idx, n.item(), l.item(), ol.item())
+        filtered_tmp = res_ch[:, self.valid_token_index].view(-1)
+        filtered_tmp = filtered_tmp.tolist()
+        print("abnormal token id:", filtered_tmp[max_index])
+        from transformers import AutoTokenizer
+        tokenizer = AutoTokenizer.from_pretrained("/mnt/nfs3/caozhe/workspace/vlav-project/train_push_cube500/internvl2-2b/v2-20250813-164406/checkpoint-4615", trust_remote_code=True)
+        response_last_logits = self._last_logits[:, -44 - 1: -1]
+        local_log_prob, local_entropy = logits2_logprobs_entropy(response_last_logits.cuda(), res_ch, **self.internvl_help_kwargs)
+        def index2raw(index): 
+            return index // self.action_token_len, index % self.action_token_len
+        index0, index1 = index2raw(max_index)
+        error_local_log_probs = local_log_prob[index0, index1]
+        print("error_local_log_probs:", error_local_log_probs)
+        print("local log prob of id:", res_ch[index0, self.valid_token_index[index1]])
+        origin_response = tokenizer.decode(res_ch[index0, self.valid_token_index[index1]])
+        print(origin_response)
+        def local_to_global(batch_idx, test_idx): 
+            return batch_idx * self.config.ppo_mini_batch_size + test_idx
+        global_idx = local_to_global(batch_idx, test_idx)
+        local_chunk = i
+        local_old_logits = self.debug_logits[global_idx, local_chunk:local_chunk + self.config.traj_mini_batch_size]
+        tmp_old_local_log_prob, tmp_old_local_entropy = logits2_logprobs_entropy(local_old_logits.cuda(), res_ch, **self.internvl_help_kwargs)
+        error_olg_local_log_prob = tmp_old_local_log_prob[index0, index1]
+        old_local_log_prob = debug_logits2_logprobs_entropy(local_old_logits.cuda(), res_ch, **self.internvl_help_kwargs)   
+    
     def compute_entropy(self, bacth_data: DataProto):
         
         if bacth_data.meta_info['train_mode'] ==True:
@@ -1061,8 +1077,6 @@ class RobDataParallelPPOActor(BasePPOActor):
         torch.cuda.empty_cache()
         self.logger.log(f"after final empty_cache: {gpu_memory()}")
         return metrics
-
-    
 
 def debug_tensor(t, name):
     return f"{name}: requires_grad={t.requires_grad}, grad_fn={t.grad_fn}, shape={t.shape}, dtype={t.dtype}"

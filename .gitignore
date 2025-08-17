@@ -144,3 +144,4 @@ ckpts/
 *debug*
 stack_cubes
 log_prob_compute_backup/
+log*

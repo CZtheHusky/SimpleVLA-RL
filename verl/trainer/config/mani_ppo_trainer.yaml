@@ -107,8 +107,8 @@ actor_rollout_ref:
     num_images_in_input: 2  
     name: vllm
     temperature: 1  # 1.0 for train, 0.3 for gen
-    top_k: 50 # 0 for hf rollout, -1 for vllm rollout # 50 for train, 20 for gen
-    top_p: 1.0  # 1.0 for train, 0.7 for gen
+    top_k: 20 # 0 for hf rollout, -1 for vllm rollout # 50 for train, 20 for gen
+    top_p: 0.7  # 1.0 for train, 0.7 for gen
     prompt_length: ${data.max_prompt_length}  # not use for opensource
     response_length: ${data.max_response_length}
     # for vllm rollout

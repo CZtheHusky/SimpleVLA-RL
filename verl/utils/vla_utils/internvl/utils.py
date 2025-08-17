@@ -11,40 +11,189 @@ from transformers import LogitsProcessorList
 import torch.nn.functional as F
 from verl.utils.torch_functional import logprobs_from_logits, entropy_from_logits
 
+
+import torch
+import torch.nn.functional as F
+
 def logits2_logprobs_entropy(
+    logits: torch.Tensor,            # [B, L, V]
+    responses: torch.Tensor,         # [B, L]  —— 实际选中的 token ids（用于 gather）
+    valid_index2token_id_list: dict | None = None,  # {t: 1D LongTensor(allowed_ids_at_t)}
+    top_k: int = None,
+    top_p: float = None,
+    min_tokens_to_keep: int = 1,
+    temperature: float = 1.0,
+    valid_token_index = None,
+):
+    """
+    返回：
+      logprob_out: [B, T_pos]  —— 在“prefix + top-k + top-p”处理后的完整分布上，被选 token 的逐步 logprob
+      entropy_out: [B, T_pos]  —— 同一分布的逐步熵
+    说明：
+      - 不裁剪 vocab 维度；不允许/被剔除的 token logits 设为 -inf，softmax 后概率为 0。
+      - 仅实现 top-k/top-p；若 rollout 还用了 repetition penalty、no_repeat_ngram 等，
+        需按相同步骤额外加到 `scores` 上，才能与真实采样完全一致。
+    """
+    B, L, V = logits.shape
+    device  = logits.device
+    logits = logits.div(temperature)  # scale logits by temperature
+    if valid_index2token_id_list is None:
+        positions = range(L)
+    else:
+        positions = list(valid_index2token_id_list.keys())
+
+    logprob_out = []
+    entropy_out = []
+
+    for t in positions:
+        # 取该步的原始 logits（完整 vocab 维度）
+        scores = logits[:, t, :].clone()        # [B, V]
+        scores_det = scores.detach()
+        # 1) Prefix control：只允许 ids_tensor；其余置 -inf（维度不变）
+        if valid_index2token_id_list is not None:
+            ids_tensor = valid_index2token_id_list[t].to(device=device, dtype=torch.long)  # [K]
+            allowed_mask = torch.zeros(V, dtype=torch.bool, device=device)
+            allowed_mask[ids_tensor] = True
+            scores = scores.masked_fill(~allowed_mask.unsqueeze(0), float("-inf"))
+
+        # 2) top-k（若启用）：保留每行 top-k，其他置 -inf
+        if isinstance(top_k, int) and top_k > 0:
+            k = min(top_k, V)
+            topk_vals, topk_idx = torch.topk(scores_det, k=k, dim=-1)          # [B, k]
+            keep_mask = torch.zeros_like(scores, dtype=torch.bool)          # [B, V]
+            keep_mask.scatter_(1, topk_idx, True)
+            scores = scores.masked_fill(~keep_mask, float("-inf"))
+
+        # 3) top-p / nucleus（若启用）：按概率降序取累计概率≥p的最小前缀；外部置 -inf
+        if isinstance(top_p, float) and (0.0 < top_p < 1.0):
+            probs = F.softmax(scores_det, dim=-1)                                # [B, V]
+            probs_sorted, idx_sorted = torch.sort(probs, dim=-1, descending=True)
+            cumsum = torch.cumsum(probs_sorted, dim=-1)
+            remove = cumsum > top_p                                          # [B, V] (sorted space)
+            # 保底至少留 min_tokens_to_keep（避免全 -inf/NaN）
+            if min_tokens_to_keep > 0:
+                remove[..., :min_tokens_to_keep] = False
+            # 映射回原位置
+            remove_unsorted = torch.zeros_like(remove).scatter(1, idx_sorted, remove)
+            scores = scores.masked_fill(remove_unsorted, float("-inf"))
+
+        # 4) 在完整 vocab 上归一化（不裁剪维度）
+        logp = F.log_softmax(scores, dim=-1)                                 # [B, V]
+        p    = logp.exp()
+
+        # 被选 token 的 logprob（来自真实轨迹）
+        chosen_ids = responses[:, t].unsqueeze(1)                            # [B, 1]
+        chosen_lp  = logp.gather(1, chosen_ids).squeeze(1)                   # [B]
+
+        # 熵（在上述分布上；被置 -inf 的位置概率为 0，不影响熵）
+        # entropy = -(p * logp).sum(dim=-1)                                    # [B]
+        entropy = entropy_from_logits(scores)
+
+        logprob_out.append(chosen_lp)
+        entropy_out.append(entropy)
+
+    return torch.stack(logprob_out, dim=-1), torch.stack(entropy_out, dim=-1)
+
+
+# def legacy_logits2_logprobs_entropy(
+#     logits: torch.Tensor,
+#     responses: torch.Tensor, 
+#     valid_index2token_id_list: dict = None,
+# ):
+#     if valid_index2token_id_list is not None:
+#         B, L, V = logits.shape
+#         device = logits.device
+#         positions = list(valid_index2token_id_list.keys())
+#         logprob_out = []
+#         entropy_out = []
+#         for t in positions:
+#             ids_tensor = valid_index2token_id_list[t]
+#             assert len(ids_tensor) > 0, f"ids_tensor should not be empty for position {t}, got {ids_tensor}"
+#             ids_tensor = ids_tensor.to(device)
+#             filtered_logits = logits[:, t, ids_tensor]            # [B, K]
+#             current_entropy = entropy_from_logits(filtered_logits)          # [B]
+#             logp_allowed = F.log_softmax(filtered_logits, dim=-1) # [B, K]
+
+#             resp_ids = responses[:, t]                             # [B]
+#             match = (ids_tensor.unsqueeze(0) == resp_ids.unsqueeze(1))  # [B, K]
+#             has_match = match.any(dim=1)                           # [B]
+#             assert has_match.all(), f"Not all positions have a match, got {has_match}"
+#             local_idx = match.float().argmax(dim=1)                # [B]（无匹配时是0，但会被 has_match 掩掉）
+
+#             chosen = logp_allowed[torch.arange(B, device=device), local_idx]  # [B]
+#             logprob_out.append(chosen)
+#             entropy_out.append(current_entropy)
+
+#         # [B, len(positions)]
+#         return torch.stack(logprob_out, dim=-1), torch.stack(entropy_out, dim=-1)
+#     else:
+#         return logprobs_from_logits(logits, responses), entropy_from_logits(logits)
+        
+
+def _log(msg: str):
+    with open("log.txt", "a", encoding="utf-8") as f:
+        f.write(msg + "\n")
+
+def debug_logits2_logprobs_entropy(
     logits: torch.Tensor,
     responses: torch.Tensor, 
     valid_index2token_id_list: dict = None,
+    temperature: float = 1.0,
+    valid_token_index=None,
 ):
-    if valid_index2token_id_list is not None:
-        B, L, V = logits.shape
-        device = logits.device
-        positions = list(valid_index2token_id_list.keys())
-        logprob_out = []
-        entropy_out = []
-        for t in positions:
-            ids_tensor = valid_index2token_id_list[t]
-            assert len(ids_tensor) > 0, f"ids_tensor should not be empty for position {t}, got {ids_tensor}"
-            ids_tensor = ids_tensor.to(device)
-            filtered_logits = logits[:, t, ids_tensor]            # [B, K]
-            current_entropy = entropy_from_logits(filtered_logits)          # [B]
-            logp_allowed = F.log_softmax(filtered_logits, dim=-1) # [B, K]
+    B, L, V = logits.shape
+    device = logits.device
+    positions = list(valid_index2token_id_list.keys())
+    logprob_out = []
+    logits = logits.div(temperature)  # scale logits by temperature
 
-            resp_ids = responses[:, t]                             # [B]
-            match = (ids_tensor.unsqueeze(0) == resp_ids.unsqueeze(1))  # [B, K]
-            has_match = match.any(dim=1)                           # [B]
-            assert has_match.all(), f"Not all positions have a match, got {has_match}"
-            local_idx = match.float().argmax(dim=1)                # [B]（无匹配时是0，但会被 has_match 掩掉）
-
-            chosen = logp_allowed[torch.arange(B, device=device), local_idx]  # [B]
-            logprob_out.append(chosen)
-            entropy_out.append(current_entropy)
-
-        # [B, len(positions)]
-        return torch.stack(logprob_out, dim=-1), torch.stack(entropy_out, dim=-1)
-    else:
-        return logprobs_from_logits(logits, responses), entropy_from_logits(logits)
+    for t in positions:
+        ids_tensor = valid_index2token_id_list[t].to(device=device, dtype=torch.long)  # [K]
+        allowed_mask = torch.zeros(V, dtype=torch.bool, device=device)
+        allowed_mask[ids_tensor] = True
+        scores = logits[:, t, :].clone()        # [B, V]
+        scores = scores.masked_fill(~allowed_mask.unsqueeze(0), float("-inf"))
         
+        logp_allowed = torch.nn.functional.log_softmax(scores, dim=-1)  # [B, K]
+
+        resp_ids = responses[:, t]                                       # [B]
+        _log(f"{t} current id\n{resp_ids.detach().cpu().tolist()}")
+
+        match = (ids_tensor.unsqueeze(0) == resp_ids.unsqueeze(1))       # [B, K]
+        has_match = match.any(dim=1)                                     # [B]
+        assert has_match.all(), f"Not all positions have a match, got {has_match}"
+        local_idx = match.float().argmax(dim=1)                          # [B]
+        chosen = logp_allowed[torch.arange(B, device=device), local_idx]  # [B]
+        for b in range(B):
+        
+            row_lp = logp_allowed[b]                             # [K]
+            chosen_j = int(local_idx[b].item())                  # 该样本 chosen 的局部索引
+            chosen_lp = row_lp[chosen_j]                         # 标量
+            vals, idxs = torch.sort(row_lp, descending=True)     # 降序
+            mask = vals > chosen_lp                              # 严格大于 chosen 的那些
+            if mask.any():
+                sel_vals = vals[mask]
+                sel_idxs = idxs[mask]
+                sel_ids  = ids_tensor[sel_idxs]
+                pairs = list(zip(
+                    sel_ids.detach().cpu().tolist(),
+                    sel_vals.detach().cpu().tolist()
+                ))
+            else:
+                pairs = []
+
+            _log(f"{t} row {b} better_than_chosen_sorted (id, logp):")
+            for local_idx, pair in enumerate(pairs):
+                _log(f"{local_idx} {pair}")
+
+            chosen_id = int(ids_tensor[chosen_j].item())
+            _log(f"{t} row {b} chosen_last (id, logp): ({chosen_id}, {float(chosen_lp.detach().cpu().item())})")
+
+        # 你原来的“整批 chosen 列表”就不再需要；若保留：
+        # _log(f"{t} chosen_all\n{chosen.detach().cpu().tolist()}")
+
+        logprob_out.append(chosen)
+    return torch.stack(logprob_out, dim=-1)
 
 
 class SafePrefixConstrainedLogitsProcessor(PrefixConstrainedLogitsProcessor):

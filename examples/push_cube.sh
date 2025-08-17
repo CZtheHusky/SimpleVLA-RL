@@ -31,7 +31,7 @@ NUM_GPUS=4
 NUM_NODES=1 
 ALIGN_PATH="align.json"
 
-HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=0,1,2,3 python -m verl.trainer.main_ppo \
+HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=4,5,6,7 python -m verl.trainer.main_ppo \
     data.task_suite_name=$DATASET_NAME \
     data.n_samples=8 \
     data.filter_accuracy=True \
@@ -53,7 +53,7 @@ HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=0,1,2,3 python -m verl.trainer.main_ppo 
     actor_rollout_ref.model.vla=$VLA_NAME \
     actor_rollout_ref.model.action_token_len=44 \
     actor_rollout_ref.model.action_chunks_len=1 \
-    actor_rollout_ref.actor.optim.lr=2e-5 \
+    actor_rollout_ref.actor.optim.lr=3e-6 \
     actor_rollout_ref.actor.optim.warmup_style=constant \
     actor_rollout_ref.actor.ppo_mini_batch_size=128 \
     actor_rollout_ref.actor.ppo_micro_batch_size=$NUM_GPUS \
@@ -100,7 +100,7 @@ HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=0,1,2,3 python -m verl.trainer.main_ppo 
     trainer.runtime_env=$ALIGN_PATH \
     trainer.wandb_mode=online \
     trainer.global_steps=0  \
-    trainer.val_before_train=True \
+    trainer.val_before_train=False \
     # trainer.wandb_kwargs.id=4yq04sq5    \
 
 

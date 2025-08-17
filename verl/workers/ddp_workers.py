@@ -205,14 +205,20 @@ class RobActorRolloutRefWorker(Worker):
             for num in numbers_index:
                 valid_token_index.append(num)
                 valid_token_index.append(num - 1)
-            self.valid_token_index = valid_token_index
-            self.valid_index2token_id_list = valid_index2token_id_list
             generation_config = dict(logits_processor=processor_list)
             # if self.config.model.get("mask_logits", False):
             #     print(f"Masking irrelevant logits")
             #     self.logger.log(f"Masking irrelevant logits")
             #     actor_module.set_action_allowed_list(valid_list)
             actor_module.set_action_generation_config(generation_config)
+            self.internvl_help_kwargs = {
+                "valid_index2token_id_list": valid_index2token_id_list,
+                "valid_token_index": valid_token_index,
+                # "top_k": self.config.rollout.get("top_k", 20),
+                # "top_p": self.config.rollout.get("top_p", 0.7),
+                "temperature": self.config.rollout.temperature,
+                
+            }
             
         actor_module.to(torch_dtype).cuda(self.local_device)
         if enable_gradient_checkpointing:
@@ -335,7 +341,7 @@ class RobActorRolloutRefWorker(Worker):
                                               actor_module=self.actor_module_ddp,
                                               actor_optimizer=self.actor_optimizer,
                                               logger=self.logger,
-                                              valid_index2token_id_list=getattr(self, 'valid_index2token_id_list', None),
+                                              internvl_help_kwargs=getattr(self, "internvl_help_kwargs", None),
                                               )
 
         if self._is_rollout:
@@ -361,8 +367,9 @@ class RobActorRolloutRefWorker(Worker):
     def entropy_update_actor(self, data: DataProto):
         # self.save_checkpoint('log_prob_compute_backup')
         actor_out = self.update_actor(data)
-        entropy_out = self.compute_entropy(data)
-        return actor_out, entropy_out
+        # entropy_out = self.compute_entropy(data)
+        # entropy_out = {}
+        return actor_out
 
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
     def update_actor(self, data: DataProto):

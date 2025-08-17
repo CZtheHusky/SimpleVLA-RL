@@ -708,14 +708,14 @@ class RayTrainer(object):
                             env_unique_id = batch.batch['env_unique_id'].numpy().reshape(-1, n_samples)[:, 0]
                             for id in env_unique_id:
                                 filtered_id_counter[id] += 1
-                        actor_output, entropy_output = self.actor_rollout_wg.entropy_update_actor(batch)
+                        actor_output = self.actor_rollout_wg.entropy_update_actor(batch)
                         # actor_output = self.actor_rollout_wg.update_actor(batch)
                         # entropy_output = self.actor_rollout_wg.compute_entropy(data=batch)
                     metrics['timing/update_actor'] = timer.last
                     actor_output_metrics = reduce_metrics(actor_output.meta_info['metrics'])
-                    entropy_output_metrics = reduce_metrics(entropy_output.meta_info['metrics'])
+                    # entropy_output_metrics = reduce_metrics(entropy_output.meta_info['metrics'])
                     metrics.update(actor_output_metrics)
-                    metrics.update(entropy_output_metrics)
+                    # metrics.update(entropy_output_metrics)
                 # validate
                 if self.val_reward_fn is not None and (global_steps + 1) % self.config.trainer.test_freq == 0:
                     with Timer(name='testing', text="{name}: {seconds:.1f} seconds") as timer:

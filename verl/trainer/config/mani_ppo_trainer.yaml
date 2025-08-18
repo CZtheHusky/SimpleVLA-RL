@@ -9,8 +9,8 @@ data:
   filter_warmup: False
   prompt_key: prompt
   system_prompt: null
-  max_prompt_length: 256
-  max_response_length: 16
+  max_prompt_length: 256  # the max length of the full sequence, including the prompt and response
+  max_response_length: 16 # the max length of the response per sample, should be the multiple of action_token_len and action_chunks_len
   train_batch_size: 1024  # divided by all workers==N_GPUS
   val_batch_size: 1312  # divided by all workers==N_GPUS
   return_raw_input_ids: False  # This should be set to true when the tokenizer between policy and rm differs
@@ -30,7 +30,7 @@ actor_rollout_ref:
   model:
     vla: internvl_chat
     mask_logits: True
-    action_token_len: 16  # 16
+    action_token_len: 16  # token length of the action string
     action_chunks_len: 1
     path: deltaQ_backbone
     external_lib: null
@@ -47,7 +47,7 @@ actor_rollout_ref:
     action_chunks_len: ${actor_rollout_ref.model.action_chunks_len}
     strategy: fsdp  # This is for backward-compatibility
     ratio_type: token
-    traj_mini_batch_size: 16  # each trajectory is splitted into several chunks of lenght traj_mini_batch_size, so the max_step of the trajectory should be divisible by traj_mini_batch_size
+    traj_mini_batch_size: 16  # each trajectory is splitted into several chunks of lenght traj_mini_batch_size
     ppo_mini_batch_size: 256
     ppo_micro_batch_size: 64
     use_dynamic_bsz: False
@@ -106,9 +106,9 @@ actor_rollout_ref:
     max_prompt_length: 512
     num_images_in_input: 2  
     name: vllm
-    temperature: 1  # 1.0 for train, 0.3 for gen
-    top_k: 20 # 0 for hf rollout, -1 for vllm rollout # 50 for train, 20 for gen
-    top_p: 0.7  # 1.0 for train, 0.7 for gen
+    temperature: 1  
+    top_k: 20 
+    top_p: 0.7 
     prompt_length: ${data.max_prompt_length}  # not use for opensource
     response_length: ${data.max_response_length}
     # for vllm rollout

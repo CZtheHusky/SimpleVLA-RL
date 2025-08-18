@@ -151,7 +151,6 @@ class RobHFRollout(BaseRollout):
 
 
     def generate_sequences(self, prompts):
-        # start_time = time.time()
         batch_size = prompts.batch.batch_size[0]
         
         if prompts.meta_info.get('n_samples') is None:  # validatino rollout
@@ -161,7 +160,6 @@ class RobHFRollout(BaseRollout):
         if self.task_suite == TaskSuite.MANISKILL:
             assert micro_batch_size > 1 and batch_size > 1, "Batch size (num venvs) must be greater than 1 to avoid env re-initialization PHYSIX Errors."
         num_chunks = max(batch_size // micro_batch_size, 1)
-        # assert batch_size % micro_batch_size == 0, f"Batch size {batch_size} is not divisible by micro batch size {micro_batch_size}."    # avoid changing the num of venvs
         batch_prompts = prompts.chunk(chunks=num_chunks)
         self.logger.log(f"Rollout, before generate_sequences, {gpu_memory()}")
         output = [self._generate_minibatch(p) for p in batch_prompts]
@@ -244,7 +242,6 @@ class RobHFRollout(BaseRollout):
             return self._venv_generate_minibatch(prompts)
                            
     def _venv_generate_minibatch(self, prompts):
-        # if self.rank == 0: breakpoint()
         self.module.eval()
         env_init_kwargs, batch_size, is_training, is_valid, max_steps, meta_info, extra_batch = prepare_mani_init(prompts, self.max_steps)
         init_data = self.env_actor.init_venv(
@@ -272,6 +269,7 @@ class RobHFRollout(BaseRollout):
                 tmp_vla_output = self._generate_one_step(vla_input, step)
                 tmp_vec_action, tmp_string_response = tmp_vla_output["action"]
                 if vla_output is not None:
+                    # mask the already done venvs to reduce rollout time
                     mask = ~is_already_done
                     mask_cpu = mask.cpu().numpy()
                     vla_output["responses"][mask] = tmp_vla_output["responses"]
@@ -302,7 +300,6 @@ class RobHFRollout(BaseRollout):
             for venv_index in range(len(is_already_done)):
                 if not is_already_done[venv_index]:
                     if is_complete[venv_index]:
-                        # print(f"Updating env {venv_index}, is_complete: {is_complete[venv_index]}, finish_step: {finish_step[venv_index]}")
                         is_already_done[venv_index] = True
                     task_records['complete'][venv_index] = is_complete[venv_index]
                     task_records['finish_step'][venv_index] = finish_step[venv_index]
@@ -310,14 +307,6 @@ class RobHFRollout(BaseRollout):
                         valid_video[venv_index].extend(output['valid_images'][venv_index])
             inputs = output['obs']
             step += self.horizon
-        # desired_steps = (max_steps + self.horizon - 1) // self.horizon
-        # current = len(vla_history)
-        # if current < desired_steps:
-        #     print("padding")
-        #     pad_count = desired_steps - current
-        #     pad_entry = {k: torch.zeros_like(vla_history[0][k], device=vla_history[0][k].device) for k in vla_history[0]}
-        #     for _ in range(pad_count):
-        #         vla_history.append(pad_entry.copy())
         if is_valid:
             print(f"Task finish steps: {task_records['finish_step']}")
             for venv_idx, images in valid_video.items():
@@ -558,7 +547,6 @@ class RobHFRollout(BaseRollout):
                     **self.generation_config,
                 )
             full_seq = torch.concatenate((input_ids, generation_output), dim=-1)
-            # print(full_seq.shape[-1])
             responses = tokenizer.batch_decode(generation_output, skip_special_tokens=True)
             try:
                 cur_response_length = generation_output.shape[-1]

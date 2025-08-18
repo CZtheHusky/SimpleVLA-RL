@@ -16,12 +16,6 @@ export RAY_DEDUP_LOGS=0
 PROJECT_NAME='SimpleVLA-RL'
 EXPERIMENT_NAME='push_cube_grpo' 
 # For openvla-oft Libero-Long traj1 SFT or traj all SFT models can be find in https://huggingface.co/collections/Haozhan72/simplevla-rl-6833311430cd9df52aeb1f86
-# SFT_MODEL_PATH="/mnt/nfs3/caozhe/workspace/vlav-project/maniskill_stack_cubes_dual_legacy/internvl2-2b/v0-20250725-182532/checkpoint-1600"
-# SFT_MODEL_PATH="/mnt/nfs3/caozhe/workspace/SimpleVLA-RL/ckpts/SimpleVLA-RL/mani_legacy_0.1_nomask/2025-08-11_14-23-44/actor/global_step_1"
-# SFT_MODEL_PATH="/mnt/nfs3/caozhe/workspace/vlav-project/train_push_cube500_legacy/internvl2-2b/v0-20250812-011657/checkpoint-2769"
-# SFT_MODEL_PATH="/mnt/nfs3/caozhe/workspace/SimpleVLA-RL/ckpts/SimpleVLA-RL/push_cube_0/2025-08-12_13-28-58/actor/global_step_0"
-# SFT_MODEL_PATH="/mnt/nfs3/caozhe/workspace/SimpleVLA-RL/ckpts/SimpleVLA-RL/push_cube_0/2025-08-12_16-27-58/actor/global_step_1_0"
-# SFT_MODEL_PATH="/mnt/nfs3/caozhe/workspace/vlav-project/train_push_cube500/internvl2-2b/v2-20250813-164406/checkpoint-4615"
 SFT_MODEL_PATH="/mnt/nfs3/caozhe/workspace/SimpleVLA-RL/ckpts/SimpleVLA-RL/push_cube_grpo/2025-08-17_13-27-04/actor/global_step_9"
 CKPT_PATH="./ckpts"
 # DATASET_NAME can be libero_10 (libero_Long), libero_90, libero_spatial, libero_object, libero_goal
@@ -102,6 +96,5 @@ HYDRA_FULL_ERROR=1 CUDA_VISIBLE_DEVICES=4,5,6,7 python -m verl.trainer.main_ppo 
     trainer.wandb_mode=online \
     trainer.global_steps=10  \
     trainer.val_before_train=False \
-    # trainer.wandb_kwargs.id=4yq04sq5    \
 
 

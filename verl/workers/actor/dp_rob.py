@@ -92,7 +92,7 @@ class RobDataParallelPPOActor(BasePPOActor):
         self.valid_token_index = valid_token_index
         assert self.action_token_len > 0, f"action_token_len should be greater than 0, got {self.action_token_len}"
         self.internvl_help_kwargs = internvl_help_kwargs if internvl_help_kwargs is not None else {}
-        self.debug_logits = []
+        # self.debug_logits = []
         
     
     def process_tensor(self, tensor: torch.Tensor, pad_id: int, no_padding=False):
@@ -271,7 +271,7 @@ class RobDataParallelPPOActor(BasePPOActor):
 
                 # Concatenate all chunks: shape (B*T, response_length)
                 logits_flat = torch.cat(logits_list, dim=0)
-                self.debug_logits.append(logits_flat.reshape(batch_size, traj_len, response_length, -1).cpu())
+                # self.debug_logits.append(logits_flat.reshape(batch_size, traj_len, response_length, -1).cpu())
                 # Compute log-probs and entropy
                 # log_probs = logprobs_from_logits(logits_flat, responses)
                 # entropy = verl_F.entropy_from_logits(logits_flat)
@@ -364,7 +364,7 @@ class RobDataParallelPPOActor(BasePPOActor):
                                         pixel_values=pixel_values,
                                         use_cache=False)  # prevent model thinks we are generating
                 logits = output.logits
-                self._last_logits = logits.cpu()
+                # self._last_logits = logits.cpu()
                 logits = logits[:, -response_length - 1:-1]  # (bsz, response_length)
                 
                 # log_probs = logprobs_from_logits(logits, responses)
@@ -554,13 +554,12 @@ class RobDataParallelPPOActor(BasePPOActor):
             raise NotImplementedError(f"Unknown ratio type: {self.config.ratio_type}")
 
 
-    def update_policy_sentence(self, data: DataProto):
+    def update_policy_sentence(self, data: DataProto):  # gspo update, untested
         data = data.to('cuda')
         traj_log_prob = self.compute_log_prob(data, traj_level=True)    # bs, 1
         data.batch['old_traj_log_probs'] = traj_log_prob
         data = data.to('cpu')  # offload to cpu to save gpu memory
         self.actor_module.train()
-        # if self.rank == 0: breakpoint()
         meta_info = data.meta_info
         
         assert self.config.ppo_mini_batch_size % self.config.ppo_micro_batch_size == 0
@@ -568,7 +567,6 @@ class RobDataParallelPPOActor(BasePPOActor):
         temperature = data.meta_info['temperature']  # temperature must be in the data.meta_info to avoid slient error
 
         select_keys = ['responses', 'input_ids', 'attention_mask', 'pixel_values', 'old_traj_log_probs', 'advantages', "finish_step", ]
-        # breakpoint()
         batch = data.select(batch_keys=select_keys).batch
         assert self.config.ppo_micro_batch_size == 1
 
@@ -701,12 +699,11 @@ class RobDataParallelPPOActor(BasePPOActor):
 
     def update_policy_token(self, data: DataProto):
         data = data.to('cuda')
-        self.debug_logits = []
+        # self.debug_logits = []
         old_log_probs = self.compute_log_prob(data)
-        self.debug_logits = torch.cat(self.debug_logits, dim=0)
+        # self.debug_logits = torch.cat(self.debug_logits, dim=0)
         data.batch['old_log_probs'] = old_log_probs
         self.actor_module.train()
-        # if self.rank == 0: breakpoint()
         assert self.config.ppo_mini_batch_size % self.config.ppo_micro_batch_size == 0
         self.gradient_accumulation = self.config.ppo_mini_batch_size // self.config.ppo_micro_batch_size
         temperature = data.meta_info['temperature']  # temperature must be in the data.meta_info to avoid slient error
@@ -1020,7 +1017,6 @@ class RobDataParallelPPOActor(BasePPOActor):
                 assert traj_len % self.config.traj_mini_batch_size == 0, f"traj_len {traj_len} must be divisible by traj_mini_batch_size {self.config.traj_mini_batch_size}"
                 traj_split_num = int(traj_len / self.config.traj_mini_batch_size)
                 # B L -> B * L
-                # if self.rank == 0: breakpoint()
                 for i in range(0, traj_len, int(traj_len / traj_split_num)):
                     id_ch = input_ids[i:i+int(traj_len/traj_split_num)]
                     attention_mask_ch = attention_mask[i:i+int(traj_len/traj_split_num)]

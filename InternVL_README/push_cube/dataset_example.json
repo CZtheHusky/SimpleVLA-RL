@@ -1,0 +1,9 @@
+[
+    {
+        "query": "The current position state of the robotic arm's end gripper is as follows: {x: 12mm, y: 38mm, z: 182mm, roll: -178 degrees, pitch: -1 degrees, yaw: 0 degrees, open: 0}. What action should the robot take to get better completion of instruction: push the cube to the target position?",
+        "response": "action: {x: -2mm, y: 0mm, z: -5mm, roll: 0 degrees, pitch: 0 degrees, yaw: 0 degrees, open: 0}",
+        "images": [
+            "push_cubes/images/0_7_0.jpg"
+        ]
+    }
+]

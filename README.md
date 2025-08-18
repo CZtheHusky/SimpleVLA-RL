@@ -1,3 +1,6 @@
+## InternVL Readme
+[README HERE](./InternVL_README/README.md)
+
 <div align="center">
 
 <img src="figs/logo.png" width="260"/>

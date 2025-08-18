@@ -38,7 +38,6 @@ class EnvActor:
         assert len(env_ids) > 1, "Num venvs must be greater than 1 to avoid env re-initialization PHYSIX Errors."
         self.finished = np.zeros(len(env_unique_ids), dtype=bool)
         self.finish_step = np.zeros(len(env_unique_ids), dtype=int)
-        # task_file_names = [f"{env_ids[venv_index]}_task_{env_unique_ids[venv_index]}_uid_{global_steps}" for venv_index in range(len(env_unique_ids))]
         task_file_names = {venv_index: f"{global_steps}_{self.pid}_{venv_index}_{env_ids[venv_index].split('-')[0]}_{env_unique_ids[venv_index]}" for venv_index in range(len(env_unique_ids))}
         try:
             if self.env is not None and (self.env_ids[0] != env_ids[0] or len(self.env_unique_ids) != len(env_unique_ids)):
@@ -61,8 +60,6 @@ class EnvActor:
             state_dict = self.env._env.get_state_dict()
             state_dict = set_state_dict(state_dict, num_samples=n_samples)
             obs, _ = self.env.reset(options={'reset_to_env_states': {'env_states': state_dict}})
-            # print(obs['sensor_data']["base_camera"]["rgb"].shape, obs['sensor_data']["hand_camera"]["rgb"].shape)
-            # valid_images = np.concatenate([obs['sensor_data']["base_camera"]["rgb"].cpu().numpy(), obs['sensor_data']["hand_camera"]["rgb"].cpu().numpy()], axis=2) if is_valid else None
         except Exception as e:
             print(f"Error during environment initialization: {e}")
             traceback.print_exc()
@@ -92,7 +89,6 @@ class EnvActor:
                 obs = self.process_obs(obs)
                 terminated = terminated.cpu().numpy()
                 self.finished = np.logical_or(self.finished, terminated)
-                # self.finished = np.random.uniform(size=self.num_envs) <= 0.01
                 self.finish_step += 1
                 valid_images = None
                 if self.is_valid:

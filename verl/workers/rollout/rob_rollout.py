@@ -127,8 +127,6 @@ class RobHFRollout(BaseRollout):
         self.train_rollout_dir = train_rollout_dir
         self.executor = ThreadPoolExecutor(max_workers=8)
         self.futures = []
-        self.actions_total = 0
-        self.error_response_count = 0
 
     def _check_futures(self):
         done, _ = wait(self.futures, timeout=0)
@@ -171,10 +169,6 @@ class RobHFRollout(BaseRollout):
         self.logger.log(f"Rollout, after generate_sequences, {gpu_memory()}")
         torch.cuda.empty_cache()
         self.logger.log(f"Rollout, after empty cache, {gpu_memory()}")
-        self.logger.log(f"Rollout, Response total: {self.actions_total} Error: {self.error_response_count}")
-        # print("Batch generation time:", time.time() - start_time)
-        self.actions_total = 0
-        self.error_response_count = 0
         return output
     
     
@@ -248,12 +242,6 @@ class RobHFRollout(BaseRollout):
             return self._generate_minibatch_libero(prompts)
         elif self.env_type == ENV_TYPE.VENV:
             return self._venv_generate_minibatch(prompts)
-        
-    def should_continue(self, step, max_step, is_already_done):
-        if self.early_stop:
-            return step < max_step and not torch.all(is_already_done)
-        else:
-            return step < max_step
                            
     def _venv_generate_minibatch(self, prompts):
         # if self.rank == 0: breakpoint()
@@ -275,30 +263,31 @@ class RobHFRollout(BaseRollout):
         step = 0
         is_already_done = torch.zeros(len(init_data['finish_step']), dtype=torch.bool).cuda()
         vla_output = None
-        while self.should_continue(step, max_steps, is_already_done):
+        while step < max_steps:
             current_inputs = inputs
             current_task_instructions = task_instructions
-            vla_input = self.process_input(current_inputs, current_task_instructions, is_already_done)
-            vla_input.update(meta_info)
-            tmp_vla_output = self._generate_one_step(vla_input, step)
-            tmp_vec_action, tmp_string_response = tmp_vla_output["action"]
-            if vla_output is not None:
-                mask = ~is_already_done
-                mask_cpu = mask.cpu().numpy()
-                vla_output["responses"][mask] = tmp_vla_output["responses"]
-                vla_output["input_ids"][mask] = tmp_vla_output["input_ids"]
-                vla_output["attention_mask"][mask] = tmp_vla_output["attention_mask"]
-                vla_output['pixel_values'][mask] = tmp_vla_output['pixel_values']
-                if self.horizon == 1:
-                    vec_action[mask_cpu] = tmp_vec_action 
+            if not torch.all(is_already_done):
+                vla_input = self.process_input(current_inputs, current_task_instructions, is_already_done)
+                vla_input.update(meta_info)
+                tmp_vla_output = self._generate_one_step(vla_input, step)
+                tmp_vec_action, tmp_string_response = tmp_vla_output["action"]
+                if vla_output is not None:
+                    mask = ~is_already_done
+                    mask_cpu = mask.cpu().numpy()
+                    vla_output["responses"][mask] = tmp_vla_output["responses"]
+                    vla_output["input_ids"][mask] = tmp_vla_output["input_ids"]
+                    vla_output["attention_mask"][mask] = tmp_vla_output["attention_mask"]
+                    vla_output['pixel_values'][mask] = tmp_vla_output['pixel_values']
+                    if self.horizon == 1:
+                        vec_action[mask_cpu] = tmp_vec_action 
+                    else:
+                        vec_action[:, mask_cpu] = tmp_vec_action
+                    mask_positions = np.nonzero(mask_cpu)[0]
+                    for idx, out_str in zip(mask_positions, tmp_string_response):
+                        string_response[idx] = out_str
                 else:
-                    vec_action[:, mask_cpu] = tmp_vec_action
-                mask_positions = np.nonzero(mask_cpu)[0]
-                for idx, out_str in zip(mask_positions, tmp_string_response):
-                    string_response[idx] = out_str
-            else:
-                vla_output = tmp_vla_output
-                vec_action, string_response = tmp_vla_output["action"]
+                    vla_output = tmp_vla_output
+                    vec_action, string_response = tmp_vla_output["action"]
             # must clone all the tensors or else the inplace change above would ruin all your fucking effort!!!!!
             step_data = {
                     "responses": vla_output["responses"].clone(),
@@ -321,14 +310,14 @@ class RobHFRollout(BaseRollout):
                         valid_video[venv_index].extend(output['valid_images'][venv_index])
             inputs = output['obs']
             step += self.horizon
-        desired_steps = (max_steps + self.horizon - 1) // self.horizon
-        current = len(vla_history)
-        if current < desired_steps:
-            print("padding")
-            pad_count = desired_steps - current
-            pad_entry = {k: torch.zeros_like(vla_history[0][k], device=vla_history[0][k].device) for k in vla_history[0]}
-            for _ in range(pad_count):
-                vla_history.append(pad_entry.copy())
+        # desired_steps = (max_steps + self.horizon - 1) // self.horizon
+        # current = len(vla_history)
+        # if current < desired_steps:
+        #     print("padding")
+        #     pad_count = desired_steps - current
+        #     pad_entry = {k: torch.zeros_like(vla_history[0][k], device=vla_history[0][k].device) for k in vla_history[0]}
+        #     for _ in range(pad_count):
+        #         vla_history.append(pad_entry.copy())
         if is_valid:
             print(f"Task finish steps: {task_records['finish_step']}")
             for venv_idx, images in valid_video.items():
@@ -581,9 +570,7 @@ class RobHFRollout(BaseRollout):
             except Exception as e:
                 print(f"Warning, {e}\nshape: {generation_output.shape}")
             string_response = [response.split(template.sep.strip())[0].strip() for response in responses]
-            actions, num_total, num_error = action_decode(prompts, string_response, self.task_suite, **self.process_kwargs)
-            self.actions_total += num_total
-            self.error_response_count += num_error
+            actions = action_decode(prompts, string_response, self.task_suite, **self.process_kwargs)
             response_attention_mask = get_eos_mask(response_id=generation_output, eos_token=eos_token_id, dtype=attention_mask.dtype)
             attention_mask = torch.cat((attention_mask, response_attention_mask), dim=-1)
             assert self.processor.pad_token_id is not None
